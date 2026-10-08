@@ -25,6 +25,6 @@
 未重新进行真实校园网络认证和长期现场验证。
 
 文件校验见 [SHA256SUMS.txt](SHA256SUMS.txt)，本版对应公开源码文件清单见 [SOURCE-SHA256SUMS.txt](SOURCE-SHA256SUMS.txt)。
-源码校验值按 Git 保存的文件内容计算；Windows 检出时换行符可能改变，验证源码请使用 GitHub 下载的源码归档。
+源码校验值按 GitHub 生成的源码归档内容计算；Windows 本地检出时换行符可能改变，验证源码请使用发行页下载的源码归档。
 公开依赖已在新建虚拟环境中实际安装、测试和打包；版本快照见 [BUILD-ENVIRONMENT.txt](BUILD-ENVIRONMENT.txt)。
 从源码构建的完整步骤见 [自主编译](../../README.md#自主编译)。
