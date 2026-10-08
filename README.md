@@ -69,9 +69,9 @@
 
 ## 使用
 
-完整发行说明和校验文件见 [GitHub Release v1.3.18](https://github.com/HakureiTree/CampusTerminal/releases/tag/v1.3.18)。
+完整发行说明和校验文件见 [GitHub Release v1.3.18](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.3.18)。
 
-1. 下载 [1.3.18 安装版](https://github.com/HakureiTree/CampusTerminal/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-setup.exe) 或 [1.3.18 便携版](https://github.com/HakureiTree/CampusTerminal/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
+1. 下载 [1.3.18 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-setup.exe) 或 [1.3.18 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
 2. 启动器检查本机环境；首次配置时同意管理员授权。如弹出 Npcap 安装窗口，按向导完成安装，随后自动继续配置并打开终端。
 3. 填写学号和密码，选择有线网卡，用普通连接登入。
 4. 点窗口关闭，程序缩到右下角托盘，继续保持认证。要停止时，在托盘菜单里选「退出程序」。

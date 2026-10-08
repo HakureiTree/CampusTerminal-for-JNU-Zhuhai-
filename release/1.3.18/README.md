@@ -2,7 +2,7 @@
 
 本仓库的首个发行版本。平台：Windows 10/11 x64。
 
-在线发行页：[GitHub Release v1.3.18](https://github.com/HakureiTree/CampusTerminal/releases/tag/v1.3.18)。
+在线发行页：[GitHub Release v1.3.18](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.3.18)。
 
 | 发行物 | 使用方法 |
 | --- | --- |
