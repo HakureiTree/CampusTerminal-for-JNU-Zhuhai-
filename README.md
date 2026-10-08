@@ -84,11 +84,13 @@
 
 ### 日志
 
-GUI 事件写入用户设置目录中的 `gui-events.jsonl`（便携版为 `state/`，安装版为 `%APPDATA%\CampusTerminal`），记录自动连接、跳过原因、后台错误和网卡路径变化。`backend-probe.json` 保存后台可执行文件的定位信息。
+认证后台将事件写入 `%APPDATA%\CampusTerminal\logs\`，按 UTC 日期生成活动日志，并在活动文件达到 8 MiB 后归档为唯一编号的分段文件。保留最近 31 个 UTC 日历日的全部分段；兼容读取旧版 `events-YYYYMMDD.jsonl.previous`。后台也会记录进程启动、停止、未处理异常的安全摘要和日志写入错误状态。
 
-认证后台的日志固定写入 `%APPDATA%\CampusTerminal\logs\events-YYYYMMDD.jsonl`，记录认证、DHCP 地址更新、断线恢复及交还官方客户端等阶段；`heartbeat.json` 每 5 秒更新运行状态。后台日志按日期保存，单文件超过 8 MiB 后滚动，并在后台启动时清理较旧文件。GUI 事件日志目前没有轮转。
+GUI 事件写入用户状态目录的 `gui-events.jsonl`：安装版使用 `%APPDATA%\CampusTerminal`，便携版使用程序目录下的 `state/`。轮转分段按归档时的 UTC 日期命名，保留最近 31 天的分段；事件带运行编号、进程编号和序号，保留网卡路径等诊断上下文。认证恢复记录保存在 `%APPDATA%\CampusTerminal\recovery-events.json`，最多保留 100 条并由状态接口返回；写入采用原子替换，损坏文件会备份隔离，备份失败时不会覆盖原文件。主界面显示最近 3 条恢复记录。首次正常登录不计作恢复；内部重试及 GUI 外层重试按每个恢复过程只计一次。
 
-`%APPDATA%\CampusTerminal\recovery-events.json` 保存最近三次重连记录。官方客户端交还过程的诊断文件另存于程序数据根目录的 `logs/campus-terminal/<运行编号>/`。
+诊断事件包括 GUI 连续无响应 10 秒及恢复、请求停滞（含方法、预算和宽限期），以及后台请求 20 秒、会话 30 秒、心跳 15 秒的独立看门狗。系统挂起和轮询间隔造成的时间缺口会分类记录，不据此重启或终止进程，也不改变认证策略。日志不得包含账号、密码、认证载荷或原始异常消息。心跳快照只反映该时刻的状态，不能证明所有后台线程都健康。GUI 日志写入故障会使用独立标记并显示警告，恢复后记录恢复状态。
+
+可在资源管理器地址栏打开 `%APPDATA%\CampusTerminal\logs` 查看后台日志，或打开便携目录的 `state/` 查看 GUI 事件；便携版后台日志与恢复历史仍位于 `%APPDATA%\CampusTerminal`。旧版程序不会自动获得这些日志改进；需重新构建并使用新程序后才生效。
 
 ## 配合学校官方客户端
 
