@@ -104,6 +104,10 @@ def run_scenario(scenario):
 
 
 class AppFlowTests(unittest.TestCase):
+    def test_address_refresh_once_per_connection_in_real_gui_event_loop(self):
+        result = subprocess.run([sys.executable, __file__, "--address-refresh"], capture_output=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
     def test_shutdown_modes_use_real_gui_event_loop(self):
         for scenario in ("disabled", "success", "failure"):
             with self.subTest(scenario=scenario):
@@ -111,8 +115,56 @@ class AppFlowTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
 
 
+def run_address_refresh_scenario():
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtWidgets import QApplication
+    from gui import app as gui
+
+    windows, observations = [], []
+    actual_window = gui.MainWindow
+    reader = SimpleNamespace(calls=0)
+
+    def read_address(_nic):
+        reader.calls += 1
+        return [f"10.10.1.{reader.calls}"]
+
+    def window_factory(*args):
+        window = actual_window(*args)
+        windows.append(window)
+
+        def feed_status():
+            backend = window.findChild(gui.BackendWorker)
+            for phase, generation in [("connecting", 0), ("verifying", 0), ("online", 0),
+                                      ("online", 0), ("degraded", 0), ("online", 0),
+                                      ("recovering", 1), ("online", 1), ("online", 1)]:
+                backend.completed.emit("status", {"ok": True, "active": True, "phase": phase,
+                                                  "processId": 123, "generation": generation,
+                                                  "recovery": {"events": [{"result": "成功"}]}})
+            observations.append((reader.calls, window.settings.ip.value.text()))
+
+        def finish():
+            observations.append((reader.calls, window.settings.ip.value.text()))
+            QApplication.instance().quit()
+
+        QTimer.singleShot(100, feed_status)
+        QTimer.singleShot(1300, finish)
+        return window
+
+    nic = {"id": "test-adapter", "name": "test", "label": "test", "up": True}
+    with patch.object(sys, "argv", [__file__, "--preview"]), \
+            patch.object(gui, "MainWindow", window_factory), \
+            patch.object(gui, "list_adapters", return_value=[nic]), \
+            patch.object(gui, "adapter_ipv4", side_effect=read_address), \
+            patch.object(gui, "alternative_path", return_value=False), \
+            patch.object(gui, "original_present", return_value=False):
+        assert gui.main() == 0
+    assert observations == [(3, "10.10.1.3"), (3, "10.10.1.3")], observations
+
+
 if __name__ == "__main__":
-    if "--scenario" in sys.argv:
+    if "--address-refresh" in sys.argv:
+        run_address_refresh_scenario()
+    elif "--scenario" in sys.argv:
         run_scenario(sys.argv[-1])
     else:
         unittest.main(verbosity=2)

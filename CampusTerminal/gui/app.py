@@ -14,7 +14,7 @@ from gui.bridge.original import gui_running as original_running, present as orig
 from gui.bridge.paths import diagnose, frozen, install_root
 from gui.bridge.client import BackendClient
 from gui.bridge.worker import BackendWorker
-from gui.bridge.local_net import TrafficSampler, alternative_path, list_adapters, path_census
+from gui.bridge.local_net import ConnectionAddressRefresh, TrafficSampler, adapter_ipv4, alternative_path, list_adapters, path_census
 from gui.bridge.messages import error_text
 from gui.bridge.auto_policy import (
     MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
@@ -123,6 +123,7 @@ def main():
         pass
     backend = BackendWorker(BackendClient(root), window)
     sampler = TrafficSampler()
+    address_refresh = ConnectionAddressRefresh()
     tray = None
     alerts = AlertHost(window, None)
     notifications = NotificationPolicy(alerts.deliver if not preview else lambda _notice: None)
@@ -165,6 +166,15 @@ def main():
 
     def selected():
         return next((a for a in adapters if a["label"] == window.settings.nic.combo.currentText()), None)
+
+    def refresh_ipv4():
+        nic = selected()
+        try:
+            addresses = adapter_ipv4(nic)
+            text = " / ".join(addresses) if addresses else "尚未分配 IPv4" if nic else "未选择网卡"
+        except OSError:
+            text = "IPv4 读取失败"
+        window.settings.ip.set_address(text)
 
     def sync_phase(phase, rows=None, error=None, recovery_enabled=None, quiet=False):
         runtime["phase"] = phase
@@ -236,6 +246,9 @@ def main():
             except OSError:
                 other = runtime["core_alternative"]
             yield_now = other and phase not in ("disconnecting", "fallback")
+            identity = (nic["id"] if nic else "", result.get("processId"), result.get("generation"))
+            if address_refresh.observe("idle" if yield_now else phase, identity):
+                refresh_ipv4()
             notice, suppress = err, False
             if phase in ("online", "degraded") or (phase == "error" and not runtime["accounted"]) or yield_now:
                 if phase in ("online", "degraded") and not yield_now:
@@ -252,10 +265,10 @@ def main():
                     runtime["auto_due"] = False
             rows = []
             for e in rec.get("events", []):
-                result = str(e.get("result") or "")
-                if not result and e.get("stage") == "TwoCampusRoundsPassed":
-                    result = "成功"
-                rows.append((str(e.get("at", "")), str(e.get("time", "")), result))
+                event_result = str(e.get("result") or "")
+                if not event_result and e.get("stage") == "TwoCampusRoundsPassed":
+                    event_result = "成功"
+                rows.append((str(e.get("at", "")), str(e.get("time", "")), event_result))
             if runtime["failure_count"] >= MAX_AUTO_FAILURES and not runtime["active"]:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
@@ -289,6 +302,7 @@ def main():
                 pump()
                 return
         else:
+            address_refresh.observe("error", None)
             lost = result.get("error") == "BackendUnavailable" and runtime["active"]
             err = result.get("firstError") or result.get("error")
             if result.get("alternative") or err == "AlternativeNetworkPath":
@@ -380,6 +394,7 @@ def main():
     def on_adapter(label):
         match = next((a for a in adapters if a["label"] == label), None)
         sampler.set_adapter(match["name"] if match else None)
+        refresh_ipv4()
         runtime["last_up"] = False
         if not preview:
             data["adapter"], data["adapter_id"] = label, match["id"] if match else ""
@@ -621,6 +636,7 @@ def main():
     attach_tray()
     match = selected()
     sampler.set_adapter(match["name"] if match else None)
+    refresh_ipv4()
     if not preview:
         if data.get("auto_connect"):
             saved_user, saved_password = saved_login()

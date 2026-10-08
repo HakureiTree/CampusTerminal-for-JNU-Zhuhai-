@@ -3,14 +3,13 @@ import os
 
 from PyQt5.QtCore import QRectF, QPoint, Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QPainter, QPainterPath
-from PyQt5.QtWidgets import QWidget
-
 from gui import theme as T
 from gui.home.page import HomePage
 from gui.settings.page import SettingsPage
 from gui.shell.banner import paint_chrome
 from gui.shell.close_btn import CloseButton
 from gui.shell.notice_dialog import NoticeOverlay
+from gui.shell.resizable import DesignLayout, ResizableWindow
 
 
 def settings_position(main, panel_size, available, gap):
@@ -24,7 +23,7 @@ def settings_position(main, panel_size, available, gap):
     return QPoint(x, y)
 
 
-class MainWindow(QWidget):
+class MainWindow(ResizableWindow):
     exit_requested = pyqtSignal()
     revealed = pyqtSignal()
     concealed = pyqtSignal()
@@ -38,7 +37,7 @@ class MainWindow(QWidget):
         self.tray_available = False
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedSize(round(T.WIN_W * scale), round(T.WIN_H * scale))
+        self.resize(round(T.WIN_W * scale), round(T.WIN_H * scale))
         self.setWindowTitle("开源暨珠有线网络终端")
         self.setWindowIcon(T.app_icon())
         self.home = HomePage(scale, family, self)
@@ -53,6 +52,27 @@ class MainWindow(QWidget):
         self.home.open_settings.connect(self.show_settings)
         self.settings.back.connect(self.show_home)
         self.settings.back_hit.setToolTip("收起设置")
+        self._layout = DesignLayout(self.home, scale)
+        self.enable_resize(self.width(), self.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "_layout"):
+            return
+        self.scale = min(self.width() / T.WIN_W, self.height() / T.WIN_H)
+        w, h = round(T.WIN_W * self.scale), round(T.WIN_H * self.scale)
+        self.home.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+        self._layout.apply(self.scale)
+        self.close_btn.scale = self.scale
+        cx, cy, r = T.CLOSE_C
+        self.close_btn.setGeometry(self.width() - round(2 * r * self.scale),
+                                   round((cy - r) * self.scale),
+                                   round(2 * r * self.scale), round(2 * r * self.scale))
+        self.notice.setGeometry(self.rect())
+        if self.settings.isVisible():
+            self._position_settings()
+        self._place_grips()
+        self.update()
 
     def present(self):
         self.showNormal()
@@ -122,7 +142,7 @@ class MainWindow(QWidget):
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), T.OUTER_R * self.scale, T.OUTER_R * self.scale)
         painter.setClipPath(path)
-        paint_chrome(painter, self.scale, self.family, self.width(), self.height())
+        paint_chrome(painter, self.scale, self.family, self.width(), self.height(), self.home.pos())
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.y() < 90 * self.scale:

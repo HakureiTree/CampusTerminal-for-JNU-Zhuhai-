@@ -6,7 +6,9 @@ from PyQt5.QtWidgets import QPushButton, QWidget
 from gui import theme as T
 from gui.settings.auto_block import AutoBlock
 from gui.settings.nic_block import NicBlock
+from gui.settings.ip_block import IpBlock
 from gui.settings.type_block import TypeBlock
+from gui.shell.resizable import DesignLayout, ResizableWindow
 from gui.widgets.paint import draw_glyphs, fill_round, prepare
 
 
@@ -19,7 +21,7 @@ class BackHit(QPushButton):
         self.setGeometry(round(40 * scale), round(80 * scale), round(280 * scale), round(120 * scale))
 
 
-class SettingsPage(QWidget):
+class SettingsPage(ResizableWindow):
     back = pyqtSignal()
     adapter_changed = pyqtSignal(str)
     type_changed = pyqtSignal(str)
@@ -32,11 +34,16 @@ class SettingsPage(QWidget):
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowTitle("设置 · 校园网终端")
-        self.setFixedSize(round(T.SET_W * scale), round(T.SET_H * scale))
-        self.nic = NicBlock(scale, family, (0, 0), self)
-        self.types = TypeBlock(scale, family, self)
-        self.autos = AutoBlock(scale, family, self)
-        self.back_hit = BackHit(scale, family, self)
+        self.resize(round(T.SET_W * scale), round(T.SET_H * scale))
+        self.content = QWidget(self)
+        self.content.setGeometry(self.rect())
+        self.nic = NicBlock(scale, family, (0, 0), self.content)
+        self.ip = IpBlock(scale, family, self.content)
+        self.types = TypeBlock(scale, family, self.content)
+        self.autos = AutoBlock(scale, family, self.content)
+        for block in (self.types, self.autos):
+            block.move(block.x(), block.y() + round(T.SET_IP_SHIFT * scale))
+        self.back_hit = BackHit(scale, family, self.content)
         self.back_hit.clicked.connect(self.back)
         self.nic.adapter_changed.connect(self.adapter_changed)
         self.types.type_changed.connect(self.type_changed)
@@ -51,6 +58,23 @@ class SettingsPage(QWidget):
         self.close_button.setToolTip("收起设置")
         self.close_button.setAccessibleName("收起设置")
         self.close_button.clicked.connect(self.back)
+        self._layout = DesignLayout(self.content, scale)
+        self.enable_resize(self.width(), self.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "_layout"):
+            return
+        self.scale = min(self.width() / T.SET_W, self.height() / T.SET_H)
+        w, h = round(T.SET_W * self.scale), round(T.SET_H * self.scale)
+        self.content.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+        self._layout.apply(self.scale)
+        side = max(24, round(105 * self.scale))
+        margin = max(8, round(45 * self.scale))
+        self.close_button.setGeometry(self.width() - side - margin, margin, side, side)
+        self.close_button.setIconSize(QSize(round(side * .6), round(side * .6)))
+        self._place_grips()
+        self.update()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -66,7 +90,8 @@ class SettingsPage(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self)
         prepare(painter)
-        fill_round(painter, (0, 0, T.SET_W, T.SET_H, T.SET_R), self.scale, T.C_INNER)
+        fill_round(painter, (0, 0, self.width() / self.scale, self.height() / self.scale, T.SET_R), self.scale, T.C_INNER)
+        painter.translate(self.content.pos())
         draw_glyphs(
             painter, T.G_SET_TITLE, (0, 0), self.scale,
             T.ui_font(103.808, self.scale, self.family), T.C_TEXT,

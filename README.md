@@ -42,6 +42,8 @@
 
 - 普通 802.1X 认证（EAPOL / EAP-MD5）、周期心跳、正常注销
 - 显示当前校园网卡的上传和下载速率
+- 主窗口和设置窗口支持拖动边框及四角调整大小，界面按比例缩放
+- 设置中显示所选网卡的当前 IPv4 地址，每次连接或重连成功后刷新，可选中复制
 - 流量异常时，在限定次数内重新认证
 - 开机自动启动；有线接入时自动尝试连接
 - 自动重连连续失败 5 次后停止，并发出系统通知；之后每 10 分钟静默再试一次
@@ -79,6 +81,14 @@
 便携版的设置和凭据位于解压目录 `state/`；安装版位于 `%APPDATA%\CampusTerminal`，默认安装位置是 `%LOCALAPPDATA%\Programs\CampusTerminal`。安装版可从 Windows 应用列表卸载，卸载会保留用户设置和日志。升级或卸载前请先从托盘退出终端。
 
 各版本按 `release/<版本号>/` 保存安装包、便携包、发行说明和 SHA-256 校验值，第一版为 **1.3.18**。
+
+### 日志
+
+GUI 事件写入用户设置目录中的 `gui-events.jsonl`（便携版为 `state/`，安装版为 `%APPDATA%\CampusTerminal`），记录自动连接、跳过原因、后台错误和网卡路径变化。`backend-probe.json` 保存后台可执行文件的定位信息。
+
+认证后台的日志固定写入 `%APPDATA%\CampusTerminal\logs\events-YYYYMMDD.jsonl`，记录认证、DHCP 地址更新、断线恢复及交还官方客户端等阶段；`heartbeat.json` 每 5 秒更新运行状态。后台日志按日期保存，单文件超过 8 MiB 后滚动，并在后台启动时清理较旧文件。GUI 事件日志目前没有轮转。
+
+`%APPDATA%\CampusTerminal\recovery-events.json` 保存最近三次重连记录。官方客户端交还过程的诊断文件另存于程序数据根目录的 `logs/campus-terminal/<运行编号>/`。
 
 ## 配合学校官方客户端
 

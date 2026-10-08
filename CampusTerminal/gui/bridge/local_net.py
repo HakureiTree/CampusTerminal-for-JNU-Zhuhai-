@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import time
+import socket
 from ctypes import POINTER, Structure, byref, c_char, cast, create_string_buffer, sizeof, windll
 from ctypes.wintypes import BOOL, BYTE, DWORD, UINT
 
@@ -168,7 +169,47 @@ def _usable_ipv4(address):
         nums = [int(p) for p in parts]
     except ValueError:
         return False
-    return nums[0] not in (0, 127) and nums[0] < 224 and not (nums[0] == 169 and nums[1] == 254)
+    return (all(0 <= n <= 255 for n in nums) and nums[0] not in (0, 127)
+            and nums[0] < 224 and not (nums[0] == 169 and nums[1] == 254))
+
+
+def adapter_ipv4(adapter):
+    """Read live addresses only from the selected interface, never the default route."""
+    if not adapter:
+        return []
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    name = adapter.get("name", "")
+    wanted_mac = adapter.get("mac", "").replace("-", "").replace(":", "").upper()
+    for candidate, addresses in addrs.items():
+        mac = next((a.address for a in addresses
+                    if a.family == psutil.AF_LINK), "")
+        mac = mac.replace("-", "").replace(":", "").upper()
+        if (wanted_mac and mac != wanted_mac) or (not wanted_mac and candidate != name):
+            continue
+        if not stats.get(candidate) or not stats[candidate].isup:
+            return []
+        return list(dict.fromkeys(a.address for a in addresses
+                                  if a.family == socket.AF_INET and _usable_ipv4(a.address)))
+    return []
+
+
+class ConnectionAddressRefresh:
+    """Read the address once per verified connection, rather than per status poll."""
+    def __init__(self):
+        self.connected = False
+        self.identity = None
+
+    def observe(self, phase, identity):
+        if phase == "degraded":
+            return False
+        if phase not in ("online", "fallback_active"):
+            self.connected = False
+            return False
+        due = not self.connected or identity != self.identity
+        self.connected = True
+        self.identity = identity
+        return due
 
 
 def alternative_path(campus_id):
