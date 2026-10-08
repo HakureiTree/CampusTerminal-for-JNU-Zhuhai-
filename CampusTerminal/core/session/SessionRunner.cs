@@ -23,7 +23,7 @@ internal sealed record SessionResult(string Reason, bool EapAuthenticated, int S
 // supplied by the host, and every packet send rechecks the host's safety gate.
 internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clock,
     Func<string?> blockReason, Action<string> log, Func<Protocol, bool>? prepareAddress=null,
-    Func<TimeSpan, string?>? monitor=null, Func<bool>? connectivityVerified=null)
+    Func<TimeSpan, string?>? monitor=null, Func<bool>? connectivityVerified=null, Action? progress=null)
 {
     public SessionResult Run(Protocol protocol, TimeSpan duration, CancellationToken cancellation)
     {
@@ -68,6 +68,7 @@ internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clo
         }
         while (clock.Elapsed < deadline)
         {
+            progress?.Invoke();
             if (cancellation.IsCancellationRequested) return Finish("Cancelled");
             var blocked = blockReason();
             if (blocked != null) return Finish(blocked);

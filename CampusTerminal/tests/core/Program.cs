@@ -14,6 +14,12 @@ void Check(bool condition, string label)
     }
     checks++;
 }
+if (args.Contains("--logging-only", StringComparer.Ordinal))
+{
+    LoggingChecks.Run(Check);
+    Console.WriteLine($"PASS: {checks} logging checks.");
+    return;
+}
 var identity = new TrialIdentity(Guid.NewGuid(), "020000000001", "192.0.2.1", "test-route");
 var snapshot = new TrialSnapshot(identity, true, false, true, false, true);
 var gate = new TrialAddressGate(identity);
@@ -87,22 +93,29 @@ var recoveryFile = Path.Combine(Path.GetTempPath(), "recovery-events-" + Guid.Ne
 RecoveryLog.UseStore(recoveryFile);
 RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
 Check(RecoveryLog.Recent().Length == 0, "The first login is not listed as an automatic reconnect");
+RecoveryLog.BeginCampaign("campaign-a");
 RecoveryLog.Observe(1, "AuthenticationGenerationStarted");
-RecoveryLog.Observe(1, "TwoCampusRoundsPassed");
+RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
+RecoveryLog.EndCampaign();
+RecoveryLog.BeginCampaign("campaign-b");
 RecoveryLog.Observe(2, "AuthenticationGenerationStarted");
 RecoveryLog.Finish(RecoveryLog.Short("LinkUnavailable"));
+RecoveryLog.EndCampaign();
+RecoveryLog.BeginCampaign("campaign-c");
 RecoveryLog.Observe(3, "AuthenticationGenerationStarted");
 RecoveryLog.Observe(3, "ReconnectAttemptsExhausted");
-RecoveryLog.Observe(4, "AuthenticationGenerationStarted");
+RecoveryLog.EndCampaign();
+RecoveryLog.BeginCampaign("campaign-d");
 var shown = RecoveryLog.Recent();
-Check(shown.Length == 3, "Only the last three automatic reconnects are kept");
-Check(shown[0]["result"]!.GetValue<string>() == "断线", "A dropped link is recorded as the result");
-Check(shown[1]["result"]!.GetValue<string>() == "失败", "Exhausted reconnect is recorded as failure");
-Check(shown[2]["result"]!.GetValue<string>() == "重连中", "An in-progress reconnect stays open");
+Check(shown.Length == 4, "Recovery history retains up to 100 campaigns");
+Check(shown[0]["result"]!.GetValue<string>() == "成功", "A generation-zero success is recorded in an explicit campaign");
+Check(shown[1]["result"]!.GetValue<string>() == "断线", "A dropped link is recorded as the result");
+Check(shown[2]["result"]!.GetValue<string>() == "失败", "Exhausted reconnect is recorded as failure");
+Check(shown[3]["result"]!.GetValue<string>() == "重连中", "An in-progress reconnect stays open");
 Check(shown[0]["at"]!.GetValue<string>().Length > 0 && shown[0]["time"]!.GetValue<string>().Length > 0,
     "Each reconnect row has a date and a time");
 RecoveryLog.UseStore(recoveryFile);
-Check(RecoveryLog.Recent().Length == 3, "Reconnect history reloads from disk");
+Check(RecoveryLog.Recent().Length == 4, "Reconnect history reloads from disk");
 File.Delete(recoveryFile);
 Check(!Adapters.LooksLikeAlternative("Hyper-V Virtual Ethernet Adapter", "vEthernet (Default Switch)",
     System.Net.NetworkInformation.NetworkInterfaceType.Ethernet), "virtual NICs are not alternative paths");

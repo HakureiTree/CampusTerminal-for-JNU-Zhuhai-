@@ -34,6 +34,8 @@ internal static class GuiHost
     private static bool allowGuiResident = true;
     private static int connectSerial;
     private static int countedSerial = -1;
+    private static RuntimeDiagnostics? diagnostics;
+    private static int heartbeatRunning;
 
     public static int Run()
     {
@@ -43,25 +45,44 @@ internal static class GuiHost
         lifetime = stop;
         journal = new RuntimeJournal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "CampusTerminal", "logs"));
+        diagnostics = new RuntimeDiagnostics((stage, detail) => journal.Write(stage, detail));
         AutoFailureBudget.ResetOnStart();
         journal.Write("BackendStarted", new { version = "CampusTerminal-1.3.18" });
         RecoveryLog.UseStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "CampusTerminal", "recovery-events.json"));
+            "CampusTerminal", "recovery-events.json"), diagnosis => journal.Write("RecoveryLogError", new { diagnosis }));
+        UnhandledExceptionEventHandler fatalHandler = (_, e) =>
+        {
+            var ex = e.ExceptionObject as Exception;
+            journal.Write("BackendUnhandledException", SafeException(ex));
+            journal.Write("BackendCrashed");
+        };
+        AppDomain.CurrentDomain.UnhandledException += fatalHandler;
         AllowOwnFirewall();
         RegisterHostTask();
         RetireDuplicateAutostart();
         TetherBinding.Start(stop.Token);
         CampusRoute.RecoverStale(id => Adapters.PhonePath(id) || Adapters.AlternativePath(id));
+        using var watchdogStop = new CancellationTokenSource();
+        var watchdog = new Thread(() => Watchdog(watchdogStop.Token)) { IsBackground = true, Name = "BackendDiagnosticsWatchdog" };
+        watchdog.Start();
         using var heartbeat = new Timer(_ =>
         {
+            if (stop.IsCancellationRequested) return;
+            if (Interlocked.CompareExchange(ref heartbeatRunning, 1, 0) != 0) return;
+            diagnostics.StartHeartbeat(Stopwatch.GetTimestamp());
             try
             {
-                journal.Heartbeat(Status(0));
+                journal.Heartbeat(SafeHeartbeatStatus());
                 NotePaths(false);
                 MaintainCampusRoute();
                 EnsureGuiResident();
             }
-            catch (Exception) { }
+            catch (Exception ex) { journal.Write("HeartbeatCallbackError", SafeException(ex)); }
+            finally
+            {
+                diagnostics.EndHeartbeat(Stopwatch.GetTimestamp());
+                Volatile.Write(ref heartbeatRunning, 0);
+            }
         }, null, 0, 5000);
         ConsoleCancelEventHandler cancel = (_, e) => { e.Cancel = true; stop.Cancel(); };
         Console.CancelKeyPress += cancel;
@@ -69,10 +90,17 @@ internal static class GuiHost
         finally
         {
             StopSession();
+            heartbeat.Dispose();
+            watchdogStop.Cancel();
+            watchdog.Join(TimeSpan.FromSeconds(2));
+            diagnostics.Dispose();
             Task? remaining;
             lock (Gate) remaining = sessionTask;
-            remaining?.Wait(TimeSpan.FromSeconds(8));
+            if (remaining != null && !remaining.Wait(TimeSpan.FromSeconds(8)))
+                journal.Write("ShutdownSessionWaitTimeout", new { thresholdSeconds = 8 });
             CampusRoute.RestoreAll();
+            journal.Write("BackendStopped");
+            AppDomain.CurrentDomain.UnhandledException -= fatalHandler;
             Console.CancelKeyPress -= cancel;
             lifetime = null;
             ownership.ReleaseMutex();
@@ -84,7 +112,31 @@ internal static class GuiHost
     {
         var method = request["method"]?.GetValue<string>() ?? "";
         var id = request["id"]?.GetValue<int>() ?? 0;
-        return method switch
+        string? correlationId = SafeRequestCorrelation(request);
+        long started = Stopwatch.GetTimestamp();
+        diagnostics?.StartRequest(id, SafeMethod(method), correlationId, started);
+        string outcome = "ok";
+        try
+        {
+            var reply = HandleCore(id, method, request);
+            if (reply.GetType().GetProperty("ok")?.GetValue(reply) is bool ok && !ok) outcome = "error";
+            return reply;
+        }
+        catch (Exception ex)
+        {
+            outcome = "error";
+            journal?.Write("HostRequestError", new { id, diagnosticRequestId = correlationId, method = SafeMethod(method), exception = SafeException(ex) });
+            throw;
+        }
+        finally
+        {
+            long duration = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            journal?.Write("HostRequestCompleted", new { id, diagnosticRequestId = correlationId, method = SafeMethod(method), durationMs = duration, outcome });
+            diagnostics?.EndRequest(Stopwatch.GetTimestamp());
+        }
+    }
+
+    private static object HandleCore(int id, string method, JsonObject request) => method switch
         {
             "status" => Status(id),
             "listAdapters" => new { ok = true, id, adapters = Adapters.List() },
@@ -95,6 +147,38 @@ internal static class GuiHost
             "shutdown" => Shutdown(id, request),
             _ => new { ok = false, id, error = "UnknownMethod" }
         };
+
+    private static string SafeMethod(string method) => method is "status" or "listAdapters" or "connect" or "configure" or "disconnect" or "releaseCampus" or "shutdown" ? method : "unknown";
+
+    private static string? SafeRequestCorrelation(JsonObject request)
+    {
+        if (request["diagnosticRequestId"] is not System.Text.Json.Nodes.JsonValue value || !value.TryGetValue<string>(out var id) ||
+            string.IsNullOrEmpty(id) || id.Length > 64 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or '-')))
+            return null;
+        return id;
+    }
+
+    private static object SafeException(Exception? ex)
+    {
+        if (ex == null) return new { errorType = "UnknownException" };
+        var frames = new System.Diagnostics.StackTrace(ex, false).GetFrames()?.Take(4).Select(frame => new
+        {
+            function = Bounded(frame.GetMethod()?.Name, 128), file = Bounded(Path.GetFileName(frame.GetFileName() ?? ""), 128),
+            line = Math.Max(0, frame.GetFileLineNumber())
+        }).ToArray() ?? [];
+        return new { errorType = Bounded(ex.GetType().Name, 128), frames };
+    }
+
+    private static string Bounded(string? value, int max) => string.IsNullOrEmpty(value) ? "unknown" : value[..Math.Min(value.Length, max)];
+
+    private static void Watchdog(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            Thread.Sleep(1000);
+            if (token.IsCancellationRequested) break;
+            diagnostics?.Observe(Stopwatch.GetTimestamp());
+        }
     }
 
     private static object Status(int id)
@@ -106,12 +190,19 @@ internal static class GuiHost
                 phase, error, firstError, acceptanceActive, heartbeatCount,
                 elevated = LiveGate.Elevated(), active = session != null, generation,
                 options = new { autoReconnect, inodeFallback }, handoff = new { attempted = handoffAttempted, running = handoffRunning, report = handoffReport },
-                logging = new { directory = journal?.DirectoryPath, error = journal?.Error },
+                logging = new { directory = journal?.DirectoryPath, error = journal?.Error, eventError = journal?.EventError,
+                    heartbeatError = journal?.HeartbeatError, recoveryError = RecoveryLog.Error },
                 capabilities = new { normal = true, fast = false, sso = false, featureSpoofing = false },
                 recovery = new { enabled = autoReconnect, attempt, maxAttempts = ConnectionRetryPolicy.MaxAttempts,
                     timeoutSeconds = ConnectionRetryPolicy.AttemptTimeout.TotalSeconds,
                     exhausted = attemptsExhausted || AutoFailureBudget.Blocked, autoFailures = AutoFailureBudget.Count,
                     events = RecoveryLog.Recent(), evidence = probeEvidence?.DeepClone() } };
+    }
+
+    private static object SafeHeartbeatStatus()
+    {
+        lock (Gate) return new { version = "CampusTerminal-1.3.18", phase, active = session != null,
+            generation, heartbeatCount, loggingError = journal?.Error };
     }
 
     private static object Configure(int id, JsonObject request)
@@ -175,7 +266,8 @@ internal static class GuiHost
             if (phase == "fallback_active") return new { ok = false, id, error = "OriginalOwnsNetwork" };
             stopIntent = HandoffTrigger.ManualDisconnect;
         }
-        if (!StopSession()) return new { ok = false, id, error = "SessionStopTimeout" };
+        if (!StopSession()) { journal?.Write("SessionStopTimeout", new { id, method = "disconnect" }); return new { ok = false, id, error = "SessionStopTimeout" }; }
+        RecoveryLog.EndCampaign();
         lock (Gate) { phase = "idle"; error = null; }
         if (shutdown) lifetime?.Cancel();
         return new { ok = true, id, phase = "idle" };
@@ -243,6 +335,10 @@ internal static class GuiHost
         // flag; refusing those would also disable the login button.
         bool automatic = options?["manual"] != null && !manual;
         bool silentRetry = options?["silentRetry"]?.GetValue<bool>() == true;
+        bool reconnectCampaign = options?["autoReconnectCampaign"]?.GetValue<bool>() == true;
+        string? campaignId = reconnectCampaign ? options?["campaignId"]?.GetValue<string>() : null;
+        LocalCredentials? credentialsToRun = null;
+        CancellationTokenSource? sessionToRun = null;
         if (acceptance == null && automatic && AutoFailureBudget.Blocked && !silentRetry)
         {
             lock (Gate) { attemptsExhausted = true; phase = "error"; error = firstError = "AutoReconnectLimit"; }
@@ -286,7 +382,21 @@ internal static class GuiHost
             probeEvidence = null;
             attempt = 0; attemptsExhausted = AutoFailureBudget.Blocked;
             connectSerial++;
-            sessionTask = Task.Run(() => RunSession(adapter, creds, owned, takeOver, acceptance));
+            credentialsToRun = creds;
+            sessionToRun = owned;
+        }
+        if (sessionToRun != null && credentialsToRun != null)
+        {
+            var launchCredentials = credentialsToRun;
+            var launchSession = sessionToRun;
+            if (reconnectCampaign) RecoveryLog.BeginCampaign(campaignId);
+            else RecoveryLog.EndCampaign();
+            diagnostics?.StartSession(Stopwatch.GetTimestamp());
+            lock (Gate)
+            {
+                if (ReferenceEquals(session, launchSession))
+                    sessionTask = Task.Run(() => RunSession(adapter, launchCredentials, launchSession, takeOver, acceptance));
+            }
         }
         return new { ok = true, id, phase = "connecting" };
     }
@@ -307,9 +417,11 @@ internal static class GuiHost
 
     private static void Note(string stage)
     {
+        int currentGeneration;
+        lock (Gate) currentGeneration = generation;
         if (stage.StartsWith("ProbeEvidence:", StringComparison.Ordinal))
             journal?.Write("ProbeEvidence", JsonNode.Parse(stage["ProbeEvidence:".Length..]));
-        else journal?.Write(stage, new { generation });
+        else journal?.Write(stage, new { generation = currentGeneration });
         lock (Gate)
         {
             if (stage == "AuthenticationRejected") firstError ??= stage;
@@ -334,11 +446,11 @@ internal static class GuiHost
                 firstError = null;
                 phase = "online"; error = null;
             }
-            RecoveryLog.Observe(generation, stage);
             if (stage is "CampusPartlyReachable" or "CampusDnsFailure" or "ProbeIndeterminate" or "TwoCampusRoundsUnavailable")
             { phase = "degraded"; error = stage; }
             if (stage == "RecoveryReauthenticating") phase = "recovering";
         }
+        RecoveryLog.Observe(currentGeneration, stage);
     }
 
     private static void CountAuthFailure()
@@ -455,7 +567,8 @@ internal static class GuiHost
             var result = new ManagedSession(transport, new SessionClock(), NewProtocol, Block, Log, Prepare, Monitor,
                 new RecoveryBudget(Path.Combine(folder, "recovery-budget.json"), () => DateTimeOffset.UtcNow),
                 number => { dhcpRequested = false; lock (Gate) generation = number; Log("AuthenticationGenerationStarted"); },
-                () => { lock (Gate) return autoReconnect; })
+                () => { lock (Gate) return autoReconnect; },
+                () => diagnostics?.PulseSession(Stopwatch.GetTimestamp()))
                 .Run(Timeout.InfiniteTimeSpan, owned.Token);
             verifiedOnline = result.Session.ConnectivityVerified && result.Session.EapAuthenticated;
             if (result.Session.Reason == "AlternativeNetworkPath" || AutoFailureBudget.Blocked || Adapters.PhonePath(adapter.Id))
@@ -465,27 +578,30 @@ internal static class GuiHost
                 phase = result.Session.Reason == "Cancelled" ? "idle" : "error";
                 error = result.Session.Reason == "Cancelled" ? null : result.Session.Reason;
                 firstError ??= error;
-                if (generation > 0 && result.Session.Reason is not (null or "Cancelled"))
-                    RecoveryLog.Finish(RecoveryLog.Short(result.Session.Reason));
             }
+            if (result.Session.Reason is not (null or "Cancelled"))
+                RecoveryLog.Finish(RecoveryLog.Short(result.Session.Reason));
             journal?.Write("SessionEnded", result);
+            if (verifiedOnline) RecoveryLog.EndCampaign();
         }
         catch (OperationCanceledException) when (owned.IsCancellationRequested)
         {
             lock (Gate) { phase = "idle"; error = null; }
+            journal?.Write("SessionCancelled");
         }
         catch (Exception ex)
         {
             lock (Gate)
             {
                 phase = "error"; error = ClassifySessionError(ex); firstError ??= error;
-                if (generation > 0) RecoveryLog.Finish(RecoveryLog.Short(error));
             }
-            journal?.Write("SessionError", new { error });
+            RecoveryLog.Finish(RecoveryLog.Short(ClassifySessionError(ex)));
+            journal?.Write("SessionError", SafeException(ex));
         }
         finally
         {
             watchdog?.Dispose();
+            diagnostics?.StopSession();
             creds.Dispose();
             bool returnOriginal;
             // A failed tray-click takeover did not stop the original client. Do not
@@ -529,8 +645,7 @@ internal static class GuiHost
         }
         catch (Exception ex)
         {
-            journal?.Write("OriginalServiceRestoreFailed", new {
-                error = ex is InvalidOperationException ? ex.Message : ex.GetType().Name });
+            journal?.Write("OriginalServiceRestoreFailed", SafeException(ex));
         }
     }
 
@@ -675,7 +790,7 @@ internal static class GuiHost
         catch (Exception ex)
         {
             guiLaunchFails++;
-            journal?.Write("GuiResidentLaunchFailed", new { error = ex.Message });
+            journal?.Write("GuiResidentLaunchFailed", SafeException(ex));
         }
         finally { if (owned) gate.ReleaseMutex(); }
     }
