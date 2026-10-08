@@ -1,0 +1,7 @@
+{
+  "BaselineSamples": 20,
+  "LowSamples": 3,
+  "DropFraction": 0.8,
+  "MinimumBytesPerSecond": 8192,
+  "HealthCheckSeconds": 60
+}

@@ -1,0 +1,3 @@
+# Optional: only needed for the original iNode client's OCR fallback.
+rapidocr-onnxruntime==1.2.3
+opencv-python==4.13.0.92

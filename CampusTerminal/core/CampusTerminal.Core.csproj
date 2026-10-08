@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>CampusTerminal.Core</AssemblyName>
+    <Version>1.3.18</Version>
+    <RootNamespace>CampusAuth</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="vendor/h3c_dict.h" LogicalName="h3c_dict.h" />
+    <None Include="probes.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="recovery-settings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

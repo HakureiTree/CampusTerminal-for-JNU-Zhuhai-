@@ -1,0 +1,2 @@
+3df645972cb352535926e93965aea7349055f444a3f8f2283ba7c87823fa79eb  CampusTerminal-1.3.18-windows-x64-portable.zip
+c800c0034cfbcc2c21ed6a2f116ba73644610c6abe35646616ab58e23ac52c3f  CampusTerminal-1.3.18-windows-x64-setup.exe

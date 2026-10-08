@@ -1,0 +1,11 @@
+{
+  "TcpTargets": [
+    { "Id": "alidns", "Group": "Alibaba", "Address": "223.5.5.5", "Port": 443 },
+    { "Id": "dnspod", "Group": "Tencent", "Address": "1.12.12.12", "Port": 443 }
+  ],
+  "HttpTargets": [
+    { "Id": "baidu", "Url": "https://www.baidu.com/" },
+    { "Id": "qq", "Url": "https://www.qq.com/" },
+    { "Id": "microsoft", "Url": "https://www.microsoft.com/" }
+  ]
+}

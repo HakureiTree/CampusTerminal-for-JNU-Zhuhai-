@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../packaging/Launch/NpcapSetup.cs" Link="NpcapSetup.cs" />
+    <Compile Include="../../packaging/Launch/WindowsNpcapPlatform.cs" Link="WindowsNpcapPlatform.cs" />
+  </ItemGroup>
+</Project>

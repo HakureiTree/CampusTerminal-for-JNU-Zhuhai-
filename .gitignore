@@ -1,0 +1,18 @@
+# Generated build files and local state
+**/bin/
+**/obj/
+**/__pycache__/
+*.py[cod]
+.venv/
+.vs/
+**/state/
+**/logs/
+**/release/
+!/release/
+!/release/**
+build/
+*.tmp
+*.dpapi
+*.pcap
+*.pcapng
+/config.json

@@ -1,0 +1,15 @@
+Python 3.13.5 x64
+.NET SDK 10.0.301
+Inno Setup 6.7.3
+
+altgraph==0.17.5
+packaging==26.3
+pefile==2024.8.26
+psutil==5.9.8
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
+PyQt5==5.15.10
+PyQt5-Qt5==5.15.2
+PyQt5_sip==12.20.0
+pywin32-ctypes==0.2.3
+setuptools==84.0.0
