@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from PyQt5.QtNetwork import QLocalSocket
 from gui.bridge.paths import core_exe
+from gui.bridge import trace
 
 PIPE = "CampusTerminal.gui"
 HOST_TASK = "ReInode-CampusTerminal-Host"
@@ -90,6 +91,10 @@ class BackendClient:
         return False
 
     def _talk_py(self, payload, timeout=3.0):
+        diagnostic_id = trace.current_request_id()
+        if diagnostic_id and isinstance(diagnostic_id, str) and diagnostic_id.isascii() and len(diagnostic_id) <= 64:
+            payload = dict(payload)
+            payload["diagnosticRequestId"] = diagnostic_id
         socket = QLocalSocket()
         deadline = time.monotonic() + timeout
         remaining = lambda: max(1, int((deadline - time.monotonic()) * 1000))

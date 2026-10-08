@@ -16,3 +16,4 @@ build/
 *.pcap
 *.pcapng
 /config.json
+.planning/

@@ -193,6 +193,11 @@ SET_AUTO_ICON = (74.0, 70.0)
 SET_AUTO_TEXT_DX = 2851.7 - 2745.80
 SET_AUTO_TEXT_DY = 2952.1 - 2892.93
 
+# Insert an address card between the adapter selector and connection options.
+SET_IP_SHIFT = 373.05
+SET_IP_BOX = (SET_NIC_BOX[0], SET_TYPE_BOX[1], SET_NIC_BOX[2], 327.78, 81.94)
+SET_H += SET_IP_SHIFT
+
 C_OUTER = QColor("#444444")
 C_INNER = QColor("#242424")
 C_CARD = QColor("#181818")

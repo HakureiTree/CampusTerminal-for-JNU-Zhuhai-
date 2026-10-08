@@ -3,6 +3,8 @@ import ctypes
 import json
 import os
 import sys
+import threading
+import uuid
 
 from PyQt5.QtCore import QTimer, QUrl, Qt
 from PyQt5.QtGui import QDesktopServices, QGuiApplication
@@ -14,7 +16,7 @@ from gui.bridge.original import gui_running as original_running, present as orig
 from gui.bridge.paths import diagnose, frozen, install_root
 from gui.bridge.client import BackendClient
 from gui.bridge.worker import BackendWorker
-from gui.bridge.local_net import TrafficSampler, alternative_path, list_adapters, path_census
+from gui.bridge.local_net import ConnectionAddressRefresh, TrafficSampler, adapter_ipv4, alternative_path, list_adapters, path_census
 from gui.bridge.messages import error_text
 from gui.bridge.auto_policy import (
     MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
@@ -69,7 +71,7 @@ def _collect(window, data):
         store.clear_password()
 
 
-def main():
+def _main_impl(cleanup):
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     try:
@@ -91,6 +93,8 @@ def main():
     if instance and not instance.acquire():
         ping(not silent_launch)
         return 0
+    if not preview:
+        trace.begin_session()
     try:
         data = dict(store.DEFAULTS) if preview else store.load()
     except OSError:
@@ -122,7 +126,9 @@ def main():
     except OSError:
         pass
     backend = BackendWorker(BackendClient(root), window)
+    cleanup.append(backend.close)
     sampler = TrafficSampler()
+    address_refresh = ConnectionAddressRefresh()
     tray = None
     alerts = AlertHost(window, None)
     notifications = NotificationPolicy(alerts.deliver if not preview else lambda _notice: None)
@@ -134,7 +140,9 @@ def main():
                "core_alternative": False, "other_noted": False, "path_fp": "",
                "notified_fallback": bool(data.get("inode_fallback")), "inode_offered": False,
                "failure_count": 0, "yielded_network": False, "accounted": False,
-               "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False}
+               "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False,
+               "campaign_id": "", "campaign_eligible": False, "log_alerted": False}
+    runtime["last_logged_status_phase"] = None
 
     def apply_original_features():
         on = original_present()
@@ -166,6 +174,15 @@ def main():
     def selected():
         return next((a for a in adapters if a["label"] == window.settings.nic.combo.currentText()), None)
 
+    def refresh_ipv4():
+        nic = selected()
+        try:
+            addresses = adapter_ipv4(nic)
+            text = " / ".join(addresses) if addresses else "尚未分配 IPv4" if nic else "未选择网卡"
+        except OSError:
+            text = "IPv4 读取失败"
+        window.settings.ip.set_address(text)
+
     def sync_phase(phase, rows=None, error=None, recovery_enabled=None, quiet=False):
         runtime["phase"] = phase
         actions = window.home.actions
@@ -186,15 +203,47 @@ def main():
         if tray:
             tray.set_phase(phase)
 
-    def options(takeover=False, manual=False, silent_retry=False):
-        return {"autoReconnect": bool(data.get("auto_reconnect")), "inodeFallback": bool(data.get("inode_fallback")),
+    def options(takeover=False, manual=False, silent_retry=False, campaign=False):
+        result = {"autoReconnect": bool(data.get("auto_reconnect")), "inodeFallback": bool(data.get("inode_fallback")),
                 "connectionType": "normal", "takeOverOriginal": bool(takeover), "manual": bool(manual),
                 "silentRetry": bool(silent_retry)}
+        if campaign:
+            result.update(autoReconnectCampaign=True, campaignId=ensure_campaign_id())
+        return result
+
+    def ensure_campaign_id():
+        if not runtime["campaign_id"]:
+            runtime["campaign_id"] = uuid.uuid4().hex
+        return runtime["campaign_id"]
+
+    def set_retry_wait(seconds, reason="failure"):
+        previous = runtime["retry_wait"]
+        runtime["retry_wait"] = max(previous, seconds)
+        if seconds and not previous:
+            trace.emit("auto_retry_wait", count=runtime["failure_count"], duration_ms=seconds * 1000,
+                       campaign_id=runtime["campaign_id"] or None, outcome="entered", reason=reason)
 
     def completed(method, result):
         if method == "shutdown" and result.get("error") in ("BackendUnavailable", "BackendStopTimeout") and not data.get("inode_fallback"):
             result = {"ok": True, "pending": False}
         if result.get("ok"):
+            logging = result.get("logging") or {}
+            log_error = logging.get("error") or logging.get("recoveryError") if isinstance(logging, dict) else None
+            if log_error and not runtime.get("backend_log_alerted"):
+                runtime["backend_log_alerted"] = True
+                trace.emit("backend_log_write_error", error=trace.safe_error(log_error))
+                alerts.warn("诊断记录", "后台日志暂时无法完整保存，请检查日志目录的写入权限。", "warning", kind="remind")
+            elif not log_error and runtime.pop("backend_log_alerted", False):
+                trace.emit("backend_log_write_recovered")
+            if method == "status":
+                runtime.pop("status_alert_error", None)
+                phase_now = result.get("phase", "idle")
+                if phase_now != runtime["last_logged_status_phase"]:
+                    runtime["last_logged_status_phase"] = phase_now
+                    trace.emit("status_phase", phase=phase_now, active=bool(result.get("active")))
+            if method == "status" and result.get("phase") in ("online", "fallback_active"):
+                runtime["campaign_eligible"] = False
+                runtime["campaign_id"] = ""
             if method == "shutdown" and result.get("pending") and data.get("inode_fallback"):
                 runtime["quit_pending"] = True
             elif method == "shutdown":
@@ -236,6 +285,9 @@ def main():
             except OSError:
                 other = runtime["core_alternative"]
             yield_now = other and phase not in ("disconnecting", "fallback")
+            identity = (nic["id"] if nic else "", result.get("processId"), result.get("generation"))
+            if address_refresh.observe("idle" if yield_now else phase, identity):
+                refresh_ipv4()
             notice, suppress = err, False
             if phase in ("online", "degraded") or (phase == "error" and not runtime["accounted"]) or yield_now:
                 if phase in ("online", "degraded") and not yield_now:
@@ -248,20 +300,26 @@ def main():
                 runtime["failure_count"], runtime["retry_stopped"], runtime["yielded_network"] = count, stopped, yielded
                 if phase == "error" or notice == "AlternativeNetworkPath":
                     runtime["accounted"] = True
+                    runtime["campaign_eligible"] = True
                 if stopped:
                     runtime["auto_due"] = False
             rows = []
             for e in rec.get("events", []):
-                result = str(e.get("result") or "")
-                if not result and e.get("stage") == "TwoCampusRoundsPassed":
-                    result = "成功"
-                rows.append((str(e.get("at", "")), str(e.get("time", "")), result))
+                event_result = str(e.get("result") or "")
+                if not event_result and e.get("stage") == "TwoCampusRoundsPassed":
+                    event_result = "成功"
+                rows.append((str(e.get("at", "")), str(e.get("time", "")), event_result))
             if runtime["failure_count"] >= MAX_AUTO_FAILURES and not runtime["active"]:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
                 if not runtime["cap_noted"]:
                     runtime["cap_noted"] = True
                     runtime["silent_wait"] = SILENT_RETRY_SECONDS
+                    trace.emit("auto_retry_cap_reached", count=runtime["failure_count"],
+                               campaign_id=ensure_campaign_id())
+                    trace.emit("auto_retry_wait", count=runtime["failure_count"],
+                               duration_ms=SILENT_RETRY_SECONDS * 1000,
+                               campaign_id=runtime["campaign_id"], outcome="entered", reason="failure_cap")
                     notice, suppress = "AutoReconnectLimit", False
                 else:
                     notice, suppress = None, True
@@ -276,7 +334,7 @@ def main():
             elif suppress and phase == "error":
                 if not runtime["cap_noted"]:
                     runtime["auto_due"] = True
-                    runtime["retry_wait"] = max(runtime["retry_wait"], 2)
+                    set_retry_wait(2, "retryable_status_error")
                 sync_phase("error", rows, notice, rec.get("enabled"), quiet=True)
             else:
                 shown = "error" if notice == "AutoReconnectLimit" else phase
@@ -289,6 +347,7 @@ def main():
                 pump()
                 return
         else:
+            address_refresh.observe("error", None)
             lost = result.get("error") == "BackendUnavailable" and runtime["active"]
             err = result.get("firstError") or result.get("error")
             if result.get("alternative") or err == "AlternativeNetworkPath":
@@ -310,6 +369,10 @@ def main():
             idle_status = method == "status" and not runtime["active"] and err == "BackendUnavailable"
             if not idle_status:
                 sync_phase("error", error=err)
+            if method == "status" and err:
+                if runtime.get("status_alert_error") != err:
+                    runtime["status_alert_error"] = err
+                    alerts.warn("连接状态", "连接后台状态读取失败，正在继续监测。", "warning", kind="remind")
             if err in ("BackendMissing", "BackendLaunchFailed", "ElevationCancelled", "AdapterNotFound",
                        "LinkUnavailable", "ReconnectAttemptsExhausted", "AutoReconnectLimit"):
                 offer_inode()
@@ -317,12 +380,12 @@ def main():
                     err, data.get("auto_connect"), runtime["manual_stop"], runtime["handed_back"],
                     runtime["failure_count"], runtime["yielded_network"]):
                 runtime["auto_due"] = True
-                runtime["retry_wait"] = 8 if err == "BackendStartTimeout" else max(runtime["retry_wait"], 3)
+                set_retry_wait(8 if err == "BackendStartTimeout" else 3, "backend_error")
             elif method in ("connect", "ensure_started") and err:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
             if method in ("connect", "ensure_started"):
-                trace.emit("backend_error", method=method, error=err)
+                runtime["campaign_eligible"] = True
             if method in ("connect", "disconnect", "shutdown"):
                 if method == "shutdown":
                     runtime["quit"] = False
@@ -380,6 +443,7 @@ def main():
     def on_adapter(label):
         match = next((a for a in adapters if a["label"] == label), None)
         sampler.set_adapter(match["name"] if match else None)
+        refresh_ipv4()
         runtime["last_up"] = False
         if not preview:
             data["adapter"], data["adapter_id"] = label, match["id"] if match else ""
@@ -427,9 +491,13 @@ def main():
         takeover = original_running() and not periodic
         trace.emit("connect_submit", silent=silent, adapter=nic["id"], takeover=takeover,
                    up=bool(nic.get("up")))
+        campaign = bool(silent and runtime["campaign_eligible"])
         backend.submit("connect", user, password, nic["id"],
-                       options(takeover=takeover, manual=not silent, silent_retry=periodic))
+                       options(takeover=takeover, manual=not silent, silent_retry=periodic, campaign=campaign))
         runtime["accounted"] = False
+        if not silent:
+            runtime["campaign_eligible"] = False
+            runtime["campaign_id"] = ""
         if not silent and runtime["failure_count"] < MAX_AUTO_FAILURES:
             runtime["retry_stopped"] = False
         runtime["manual_stop"] = False
@@ -462,6 +530,8 @@ def main():
     def disconnect():
         runtime["manual_stop"] = True
         runtime["auto_due"] = False
+        runtime["campaign_eligible"] = False
+        runtime["campaign_id"] = ""
         runtime["disconnect"] = True
         sync_phase("disconnecting")
         pump()
@@ -469,7 +539,15 @@ def main():
     def tick():
         if runtime["closing"] or preview:
             return
+        if not runtime["log_alerted"] and (store.APP_DIR / "gui-events.write-status.json").exists():
+            runtime["log_alerted"] = True
+            alerts.warn("诊断记录", "诊断日志暂时无法写入；应用仍在运行。请检查应用状态目录的写入权限。",
+                        "warning", kind="remind")
+        elif runtime["log_alerted"] and not (store.APP_DIR / "gui-events.write-status.json").exists():
+            runtime["log_alerted"] = False
         runtime["ticks"] += 1
+        if runtime["ticks"] % 60 == 0:
+            trace.session_heartbeat()
         if runtime["ticks"] % 2 == 0:
             fresh = list_adapters()
             current = window.settings.nic.combo.currentText()
@@ -538,10 +616,17 @@ def main():
                 runtime["silent_wait"], True, other, bool(data.get("auto_connect")),
                 runtime["manual_stop"], runtime["handed_back"])
             if due:
+                trace.emit("auto_retry_wait", count=runtime["failure_count"],
+                           duration_ms=SILENT_RETRY_SECONDS * 1000,
+                           campaign_id=ensure_campaign_id(), outcome="resumed", reason="failure_cap")
                 connect(silent=True, periodic=True)
         if runtime["auto_due"] and not runtime["active"] and not runtime["handed_back"] and not runtime["quit"]:
             if runtime["retry_wait"] > 0:
                 runtime["retry_wait"] -= 1
+                if runtime["retry_wait"] == 0:
+                    trace.emit("auto_retry_wait", count=runtime["failure_count"], duration_ms=0,
+                               campaign_id=runtime["campaign_id"] or None,
+                               outcome="resumed", reason="backend_error")
             elif connect(silent=True):
                 runtime["auto_due"] = False
             else:
@@ -621,6 +706,7 @@ def main():
     attach_tray()
     match = selected()
     sampler.set_adapter(match["name"] if match else None)
+    refresh_ipv4()
     if not preview:
         if data.get("auto_connect"):
             saved_user, saved_password = saved_login()
@@ -635,11 +721,19 @@ def main():
     timer = QTimer(window)
     timer.setInterval(1000)
     timer.timeout.connect(tick)
+    watchdog = trace.MainLoopWatchdog()
+    cleanup.append(watchdog.close)
+    pulse = QTimer(window)
+    pulse.setInterval(250)
+    pulse.timeout.connect(watchdog.pulse)
+    pulse.start()
     def stop_ui_callbacks():
         if runtime["closing"]:
             return
         runtime["closing"] = True
         timer.stop()
+        pulse.stop()
+        watchdog.close()
         # Focus loss during widget destruction must not save or open a dialog.
         window.home.login.account.textChanged.disconnect(mark_login_edit)
         window.home.login.password.textChanged.disconnect(mark_login_edit)
@@ -672,3 +766,29 @@ def main():
     stop_ui_callbacks()
     backend.close()
     return code
+
+
+def main():
+    old_sys_hook, old_thread_hook = sys.excepthook, threading.excepthook
+    crash = {"exception": None}
+    cleanup = []
+    def _sys_hook(exc_type, _exc, tb):
+        trace.safe_exception("unhandled_exception", exc_type, tb)
+    def _thread_hook(args):
+        trace.safe_exception("unhandled_thread_exception", args.exc_type, args.exc_traceback)
+    sys.excepthook, threading.excepthook = _sys_hook, _thread_hook
+    try:
+        return _main_impl(cleanup)
+    except BaseException as exc:
+        crash["exception"] = exc
+        trace.safe_exception("gui_startup_exception", type(exc), exc.__traceback__)
+        return 1
+    finally:
+        for close in reversed(cleanup):
+            try:
+                close()
+            except Exception as exc:
+                trace.safe_exception("gui_cleanup_exception", type(exc), exc.__traceback__)
+        exc = crash["exception"]
+        trace.end_session(bool(exc), type(exc) if exc else None, exc.__traceback__ if exc else None)
+        sys.excepthook, threading.excepthook = old_sys_hook, old_thread_hook

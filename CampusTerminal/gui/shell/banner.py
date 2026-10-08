@@ -6,15 +6,18 @@ from gui import theme as T
 from gui.widgets.paint import draw_baseline, draw_glyphs, prepare
 
 
-def paint_chrome(painter, scale, family, width, height):
+def paint_chrome(painter, scale, family, width, height, origin):
     prepare(painter)
     outer = QPainterPath()
     outer.addRoundedRect(QRectF(0, 0, width, height), T.OUTER_R * scale, T.OUTER_R * scale)
     painter.fillPath(outer, T.C_OUTER)
     ix, iy, iw, ih, ir = T.INNER
     inner = QPainterPath()
-    inner.addRoundedRect(QRectF(ix * scale, iy * scale, iw * scale, ih * scale), ir * scale, ir * scale)
+    inner.addRoundedRect(QRectF(ix * scale, iy * scale,
+                              width - (T.WIN_W - iw) * scale,
+                              height - (T.WIN_H - ih) * scale), ir * scale, ir * scale)
     painter.fillPath(inner, T.C_INNER)
+    painter.translate(origin)
     bx, by, bw, bh, br = T.BANNER
     banner = QPainterPath()
     banner.addRoundedRect(QRectF(bx * scale, by * scale, bw * scale, bh * scale), br * scale, br * scale)

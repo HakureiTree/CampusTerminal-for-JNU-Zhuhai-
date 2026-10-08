@@ -6,7 +6,7 @@ internal sealed record ManagedResult(SessionResult Session, int Generation, bool
 internal sealed class ManagedSession(IFrameTransport transport, ISessionClock clock,
     Func<Protocol> newProtocol, Func<string?> blockReason, Action<string> log,
     Func<Protocol, bool> prepareAddress, Func<int, ISessionMonitor?> newMonitor,
-    IRecoveryBudget budget, Action<int> beginGeneration, Func<bool>? recoveryEnabled = null)
+    IRecoveryBudget budget, Action<int> beginGeneration, Func<bool>? recoveryEnabled = null, Action? progress = null)
 {
     public ManagedResult Run(TimeSpan duration, CancellationToken cancellation)
     {
@@ -32,7 +32,7 @@ internal sealed class ManagedSession(IFrameTransport transport, ISessionClock cl
                 }
                 var remaining = unbounded ? Timeout.InfiniteTimeSpan : deadline - clock.Elapsed;
                 result = new SessionRunner(transport, clock, blockReason, log, prepareAddress, Tick,
-                    () => monitor?.Verified == true || monitor?.Held == true)
+                    () => monitor?.Verified == true || monitor?.Held == true, progress)
                     .Run(protocol, remaining, cancellation);
                 verified = result.ConnectivityVerified && (monitor?.Verified ?? false);
             }
