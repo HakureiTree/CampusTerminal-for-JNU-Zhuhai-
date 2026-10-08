@@ -4,19 +4,21 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import uuid
 from unittest.mock import patch
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ["CAMPUS_TERMINAL_STATE"] = str(ROOT / "state/test-settings")
+os.environ["CAMPUS_TERMINAL_STATE"] = str(ROOT / "state" / ("test-settings-" + uuid.uuid4().hex))
 
 
 def run_scenario(scenario):
     from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QApplication
     from gui import app as gui
+    original_sys_hook, original_thread_hook = sys.excepthook, __import__("threading").excepthook
 
     events, warnings, windows = [], [], []
     writes, teardown_checks = [], []
@@ -90,6 +92,8 @@ def run_scenario(scenario):
             patch.object(gui.QSystemTrayIcon, "isSystemTrayAvailable", return_value=False), \
             patch.object(gui.QMessageBox, "warning", side_effect=lambda *args: warnings.append(args[-1])):
         assert gui.main() == 0
+    assert sys.excepthook is original_sys_hook
+    assert __import__("threading").excepthook is original_thread_hook
     assert teardown_checks == [True], "Late focus-loss signals must not persist after shutdown"
     shutdowns = [e for e in events if e[0] == "shutdown"]
     assert len(shutdowns) == (2 if enabled else 1), events
@@ -104,6 +108,19 @@ def run_scenario(scenario):
 
 
 class AppFlowTests(unittest.TestCase):
+    def test_main_wrapper_restores_hooks_after_startup_exception_without_message_leak(self):
+        from gui import app as gui
+        original_sys, original_thread = sys.excepthook, __import__("threading").excepthook
+        with patch.object(gui, "_main_impl", side_effect=RuntimeError("synthetic-password-secret")):
+            self.assertEqual(gui.main(), 1)
+        self.assertIs(sys.excepthook, original_sys)
+        self.assertIs(__import__("threading").excepthook, original_thread)
+        state = Path(os.environ["CAMPUS_TERMINAL_STATE"])
+        text = "\n".join(p.read_text(encoding="utf-8") for p in state.glob("gui-events*.jsonl"))
+        self.assertIn("gui_startup_exception", text)
+        self.assertIn("RuntimeError", text)
+        self.assertNotIn("synthetic-password-secret", text)
+
     def test_address_refresh_once_per_connection_in_real_gui_event_loop(self):
         result = subprocess.run([sys.executable, __file__, "--address-refresh"], capture_output=True, timeout=12)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
@@ -113,6 +130,10 @@ class AppFlowTests(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 result = subprocess.run([sys.executable, __file__, "--scenario", scenario], capture_output=True, timeout=12)
                 self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
+    def test_automatic_reconnect_campaign_metadata_is_sent_per_worker_attempt(self):
+        result = subprocess.run([sys.executable, __file__, "--campaign"], capture_output=True, timeout=12)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
 
 
 def run_address_refresh_scenario():
@@ -161,10 +182,72 @@ def run_address_refresh_scenario():
     assert observations == [(3, "10.10.1.3"), (3, "10.10.1.3")], observations
 
 
+def run_campaign_scenario():
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtWidgets import QApplication
+    from gui import app as gui
+
+    original_sys, original_thread = sys.excepthook, __import__("threading").excepthook
+    attempts = []
+    class Backend:
+        connects = 0
+        def __init__(self, _root): pass
+        def status(self):
+            return {"ok": True, "active": self.connects >= 3,
+                    "phase": "online" if self.connects >= 3 else "idle",
+                    "processId": 44, "generation": 1, "recovery": {"events": []}}
+        def connect(self, _user, _password, _adapter, options):
+            attempts.append(dict(options))
+            self.connects += 1
+            if self.connects < 3:
+                return {"ok": True, "active": False, "phase": "error", "firstError": "AuthenticationRejected",
+                        "recovery": {"events": []}}
+            return {"ok": True, "active": True, "phase": "online", "recovery": {"events": []}}
+        def shutdown(self, *_args): return {"ok": True, "active": False, "phase": "idle"}
+        def configure(self, options): return {"ok": True, "options": options, "phase": "idle"}
+        def disconnect(self): return {"ok": True, "phase": "idle"}
+        def release_campus(self, _adapter): return {"ok": True}
+
+    original_interval = QTimer.setInterval
+    def quick_interval(timer, interval):
+        return original_interval(timer, 20 if interval == 1000 else interval)
+    data = {**gui.store.DEFAULTS, "account": "synthetic-account", "save_account": True,
+            "save_password": True, "auto_connect": True, "auto_start": False}
+    nic = {"id": "campaign-adapter", "name": "test", "label": "test", "up": True}
+    real_window = gui.MainWindow
+    def campaign_window(*args):
+        window = real_window(*args)
+        QTimer.singleShot(4500, QApplication.instance().quit)
+        return window
+    with patch.object(gui, "BackendClient", Backend), \
+            patch.object(gui, "MainWindow", campaign_window), \
+            patch.object(gui, "SingleInstance", return_value=SimpleNamespace(acquire=lambda: True)), \
+            patch.object(gui, "list_adapters", return_value=[nic]), \
+            patch.object(gui.store, "load", return_value=data), \
+            patch.object(gui.store, "load_password", return_value="synthetic-password"), \
+            patch.object(gui.store, "save"), patch.object(gui.store, "clear_password"), \
+            patch.object(gui.store, "startup_enabled", return_value=False), \
+            patch.object(gui.QSystemTrayIcon, "isSystemTrayAvailable", return_value=False), \
+            patch.object(gui, "alternative_path", return_value=False), \
+            patch.object(gui, "original_present", return_value=False), \
+            patch.object(QTimer, "setInterval", quick_interval):
+        assert gui.main() == 0
+    assert len(attempts) >= 3, attempts
+    assert "autoReconnectCampaign" not in attempts[0]
+    later = attempts[1:]
+    assert all(row.get("autoReconnectCampaign") is True for row in later), attempts
+    campaign_ids = {row.get("campaignId") for row in later}
+    assert len(campaign_ids) == 1 and next(iter(campaign_ids)), attempts
+    assert sys.excepthook is original_sys
+    assert __import__("threading").excepthook is original_thread
+
+
 if __name__ == "__main__":
     if "--address-refresh" in sys.argv:
         run_address_refresh_scenario()
     elif "--scenario" in sys.argv:
         run_scenario(sys.argv[-1])
+    elif "--campaign" in sys.argv:
+        run_campaign_scenario()
     else:
         unittest.main(verbosity=2)
