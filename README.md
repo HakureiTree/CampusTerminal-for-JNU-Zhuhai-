@@ -128,10 +128,24 @@ Python 测试覆盖 GUI、凭据存储、通知、自启动、路径与模拟交
 
 ### 生成便携版和安装版
 
+在仓库根目录执行完整构建：
+
+```powershell
+.\Build.ps1 -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+```
+
+脚本优先使用 `.venv\Scripts\python.exe`，也可通过 `-Python` 指定已安装 `requirements.txt` 的解释器。Inno Setup 位于默认安装目录或 PATH 中时，可以直接运行 `.\Build.ps1`。只生成便携版时运行 `.\Build.ps1 -PortableOnly`。
+
+输出目录 `build/` 在本机编译时生成，并由 `.gitignore` 忽略。仓库保存构建脚本和源码，按需生成可运行目录及安装包。
+
+也可以分两步构建。先生成便携目录及 ZIP，完成后再生成安装版：
+
 ```powershell
 .\CampusTerminal\packaging\Publish.ps1 -Python .\.venv\Scripts\python.exe -OutputRoot .\build
 .\CampusTerminal\packaging\Build-Installer.ps1 -SourceDir .\build\CampusTerminal -OutputDir .\build -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
+
+`Build-Installer.ps1` 使用第一步生成的 `build\CampusTerminal`。遇到该目录缺失的提示时，先运行 `Publish.ps1`，或用根目录的 `Build.ps1` 完成整个流程。
 
 若 Inno Setup 安装在其它位置，将 `-Iscc` 改为实际路径；已加入 PATH 时可省略此参数。输出：
 
@@ -151,6 +165,7 @@ build/
 | `CampusTerminal/gui/` | PyQt5 界面、图片与字体 |
 | `CampusTerminal/core/` | .NET 认证、会话、联网核验和交还逻辑 |
 | `CampusTerminal/packaging/` | PyInstaller、启动器、Inno Setup 和卸载脚本 |
+| `Build.ps1` | 依次生成便携版和安装版的完整构建入口 |
 | `CampusTerminal/operations/` | 后台任务与开发环境自启动登记 |
 | `CampusTerminal/tests/` | 离线测试及模拟平台 |
 | `src/`、`replacement/`、根目录 PowerShell 脚本 | 原客户端交还所需的 PowerShell 和 OCR 支持代码 |

@@ -2,6 +2,9 @@
 param([Parameter(Mandatory=$true)][string]$SourceDir, [string]$OutputDir, [string]$Iscc)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
+if(-not (Test-Path -LiteralPath $SourceDir -PathType Container)){
+    throw "Portable build directory missing: $SourceDir. Run .\Build.ps1 for the complete build, or run .\CampusTerminal\packaging\Publish.ps1 first."
+}
 $SourceDir=(Resolve-Path -LiteralPath $SourceDir).Path
 if(-not $OutputDir){$OutputDir=Split-Path $SourceDir -Parent}
 $OutputDir=[IO.Path]::GetFullPath($OutputDir)
