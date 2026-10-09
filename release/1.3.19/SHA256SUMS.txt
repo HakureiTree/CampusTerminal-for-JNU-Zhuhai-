@@ -1,0 +1,2 @@
+6e8d93747397fff41e6e3365d045d4f8d87c98f7f5e492fb2cafe195c1bddaa2  CampusTerminal-1.3.19-windows-x64-portable.zip
+0c019ace9c4f5141f437a65ec0209a43409aacc111aef3f5c565b23d81f5580d  CampusTerminal-1.3.19-windows-x64-setup.exe
