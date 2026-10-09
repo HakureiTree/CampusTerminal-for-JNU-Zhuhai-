@@ -8,7 +8,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AssemblyName>开源暨珠有线网络终端</AssemblyName>
-    <Version>1.3.18</Version>
+    <Version>1.3.19</Version>
     <RootNamespace>CampusLaunch</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\gui\assets\icons\app\app.ico</ApplicationIcon>

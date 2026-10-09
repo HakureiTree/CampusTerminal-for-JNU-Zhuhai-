@@ -179,7 +179,7 @@ class TerminalTests(unittest.TestCase):
             result = client.ensure_started()
             self.assertTrue(result.get("ok"), result)
             self.assertFalse(result["active"])
-            self.assertEqual(client.ensure_started()["version"], "CampusTerminal-1.3.18")
+            self.assertEqual(client.ensure_started()["version"], "CampusTerminal-1.3.19")
         finally:
             self.assertTrue(client.shutdown().get("ok"))
             deadline = time.monotonic() + 5
@@ -258,7 +258,7 @@ class TerminalTests(unittest.TestCase):
                     break
                 time.sleep(.05)
             self.assertTrue(status.get("ok"), status)
-            self.assertEqual(status["version"], "CampusTerminal-1.3.18")
+            self.assertEqual(status["version"], "CampusTerminal-1.3.19")
             self.assertFalse(status["options"]["inodeFallback"])
             self.assertFalse(status["active"])
             for enabled in [False, True, False]:

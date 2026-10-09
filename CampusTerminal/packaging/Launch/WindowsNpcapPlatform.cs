@@ -58,7 +58,7 @@ internal sealed class WindowsNpcapPlatform : INpcapSetupPlatform
             var request = (HttpWebRequest)WebRequest.Create(InstallerUrl);
             request.Timeout = 60000;
             request.ReadWriteTimeout = 60000;
-            request.UserAgent = "CampusTerminal/1.3.18";
+            request.UserAgent = "CampusTerminal/1.3.19";
             using (var response = (HttpWebResponse)request.GetResponse())
             using (var input = response.GetResponseStream())
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))

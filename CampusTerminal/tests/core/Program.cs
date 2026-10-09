@@ -196,6 +196,7 @@ try
         .RootElement.GetProperty("status").GetProperty("phase").GetString() == "online", "Fresh backend status persists independently of GUI");
 }
 finally { Directory.Delete(logFolder, true); }
+LoggingChecks.Run(Check);
 Console.WriteLine($"PASS: {checks} backend checks; only simulated authentication frames.");
 
 static Protocol New() => new([2,0,0,0,0,1], "test-student", Encoding.ASCII.GetBytes("test-only"), [192,0,2,1], 42, new H3cCrypto());

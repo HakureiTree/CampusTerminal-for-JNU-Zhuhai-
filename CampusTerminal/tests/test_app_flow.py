@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
 from unittest.mock import patch
@@ -111,12 +112,13 @@ class AppFlowTests(unittest.TestCase):
     def test_main_wrapper_restores_hooks_after_startup_exception_without_message_leak(self):
         from gui import app as gui
         original_sys, original_thread = sys.excepthook, __import__("threading").excepthook
-        with patch.object(gui, "_main_impl", side_effect=RuntimeError("synthetic-password-secret")):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(gui.store, "APP_DIR", Path(directory)), \
+                patch.object(gui, "_main_impl", side_effect=RuntimeError("synthetic-password-secret")):
             self.assertEqual(gui.main(), 1)
+            text = "\n".join(p.read_text(encoding="utf-8") for p in Path(directory).glob("gui-events*.jsonl"))
         self.assertIs(sys.excepthook, original_sys)
         self.assertIs(__import__("threading").excepthook, original_thread)
-        state = Path(os.environ["CAMPUS_TERMINAL_STATE"])
-        text = "\n".join(p.read_text(encoding="utf-8") for p in state.glob("gui-events*.jsonl"))
         self.assertIn("gui_startup_exception", text)
         self.assertIn("RuntimeError", text)
         self.assertNotIn("synthetic-password-secret", text)

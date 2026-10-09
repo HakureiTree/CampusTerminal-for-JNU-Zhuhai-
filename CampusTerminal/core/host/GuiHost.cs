@@ -47,7 +47,7 @@ internal static class GuiHost
             "CampusTerminal", "logs"));
         diagnostics = new RuntimeDiagnostics((stage, detail) => journal.Write(stage, detail));
         AutoFailureBudget.ResetOnStart();
-        journal.Write("BackendStarted", new { version = "CampusTerminal-1.3.18" });
+        journal.Write("BackendStarted", new { version = "CampusTerminal-1.3.19" });
         RecoveryLog.UseStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "CampusTerminal", "recovery-events.json"), diagnosis => journal.Write("RecoveryLogError", new { diagnosis }));
         UnhandledExceptionEventHandler fatalHandler = (_, e) =>
@@ -184,7 +184,7 @@ internal static class GuiHost
     private static object Status(int id)
     {
         lock (Gate)
-            return new { ok = true, id, version = "CampusTerminal-1.3.18", processId = Environment.ProcessId,
+            return new { ok = true, id, version = "CampusTerminal-1.3.19", processId = Environment.ProcessId,
                 alternative = Adapters.AlternativePath(Guid.Empty),
                 executable = Environment.ProcessPath,
                 phase, error, firstError, acceptanceActive, heartbeatCount,
@@ -201,7 +201,7 @@ internal static class GuiHost
 
     private static object SafeHeartbeatStatus()
     {
-        lock (Gate) return new { version = "CampusTerminal-1.3.18", phase, active = session != null,
+        lock (Gate) return new { version = "CampusTerminal-1.3.19", phase, active = session != null,
             generation, heartbeatCount, loggingError = journal?.Error };
     }
 

@@ -7,7 +7,7 @@
 <p>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="许可证：GPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-GPL--3.0-2563EB?style=flat&logo=gnu&logoColor=white" /></a>
   <img alt="平台：Windows 10 / 11" src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011-0078D4?style=flat&logo=windows&logoColor=white" />
-  <img alt="版本：1.3.18" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.3.18-3F6212?style=flat" />
+  <img alt="版本：1.3.19" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.3.19-3F6212?style=flat" />
 </p>
 
 <p>
@@ -41,6 +41,7 @@
 ## 功能
 
 - 普通 802.1X 认证（EAPOL / EAP-MD5）、周期心跳、正常注销
+- 主窗口和设置窗口支持拖动边框缩放，保留输入内容和勾选状态
 - 显示当前校园网卡的上传和下载速率
 - 设置中显示所选网卡的当前 IPv4 地址，每次连接或重连成功后刷新，可选中复制
 - 流量异常时，在限定次数内重新认证
@@ -54,7 +55,7 @@
 程序或计算机重新启动后，自动重连的失败次数清零。
 
 > [!NOTE]
-> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.3.18/README.md)。
+> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.3.19/README.md)。
 
 ## 环境
 
@@ -70,9 +71,9 @@
 
 ## 使用
 
-完整发行说明和校验文件见 [GitHub Release v1.3.18](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.3.18)。
+完整发行说明和校验文件见 [GitHub Release v1.3.19](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.3.19)。
 
-1. 下载 [1.3.18 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-setup.exe) 或 [1.3.18 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.18/CampusTerminal-1.3.18-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
+1. 下载 [1.3.19 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.19/CampusTerminal-1.3.19-windows-x64-setup.exe) 或 [1.3.19 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.19/CampusTerminal-1.3.19-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
 2. 启动器检查本机环境；首次配置时同意管理员授权。如弹出 Npcap 安装窗口，按向导完成安装，随后自动继续配置并打开终端。
 3. 填写学号和密码，选择有线网卡，用普通连接登入。
 4. 点窗口关闭，程序缩到右下角托盘，继续保持认证。要停止时，在托盘菜单里选「退出程序」。
@@ -83,15 +84,17 @@
 
 ### 日志
 
-> 如果你遇到重连未生效问题、进程卡死问题，请先查看日志并提交issue，谢谢！
+遇到重连失败或界面卡顿时，可在 [Issues](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/issues) 中附上发生时间和相关日志。
 
-认证后台将事件写入 `%APPDATA%\CampusTerminal\logs\`，按 UTC 日期生成活动日志，并在活动文件达到 8 MiB 后归档为唯一编号的分段文件。保留最近 31 个 UTC 日历日的全部分段；兼容读取旧版 `events-YYYYMMDD.jsonl.previous`。后台也会记录进程启动、停止、未处理异常的安全摘要和日志写入错误状态。
+| 记录 | 位置 |
+| --- | --- |
+| 后台事件与心跳 | `%APPDATA%\CampusTerminal\logs` |
+| GUI 事件 | 安装版：`%APPDATA%\CampusTerminal\gui-events.jsonl`；便携版：`state/gui-events.jsonl` |
+| 重连历史 | `%APPDATA%\CampusTerminal\recovery-events.json` |
 
-GUI 事件写入用户状态目录的 `gui-events.jsonl`：安装版使用 `%APPDATA%\CampusTerminal`，便携版使用程序目录下的 `state/`。轮转分段按归档时的 UTC 日期命名，保留最近 31 天的分段；事件带运行编号、进程编号和序号，保留网卡路径等诊断上下文。认证恢复记录保存在 `%APPDATA%\CampusTerminal\recovery-events.json`，最多保留 100 条并由状态接口返回；写入采用原子替换，损坏文件会备份隔离，备份失败时不会覆盖原文件。主界面显示最近 3 条恢复记录。首次正常登录不计作恢复；内部重试及 GUI 外层重试按每个恢复过程只计一次。
+日志按 8 MiB 轮转，分段使用唯一编号，保留最近 31 个 UTC 日历日。记录包含请求编号、网卡信息、调用超时、线程停滞及恢复事件，敏感字段经过过滤。GUI 会显示日志写入故障，并在写入恢复后记录恢复状态。
 
-诊断事件包括 GUI 连续无响应 10 秒及恢复、请求停滞（含方法、预算和宽限期），以及后台请求 20 秒、会话 30 秒、心跳 15 秒的独立看门狗。系统挂起和轮询间隔造成的时间缺口会分类记录，不据此重启或终止进程，也不改变认证策略。日志不得包含账号、密码、认证载荷或原始异常消息。心跳快照只反映该时刻的状态，不能证明所有后台线程都健康。GUI 日志写入故障会使用独立标记并显示警告，恢复后记录恢复状态。
-
-可在资源管理器地址栏打开 `%APPDATA%\CampusTerminal\logs` 查看后台日志，或打开便携目录的 `state/` 查看 GUI 事件；便携版后台日志与恢复历史仍位于 `%APPDATA%\CampusTerminal`。旧版程序不会自动获得这些日志改进；需重新构建并使用新程序后才生效。
+重连历史保留 100 条，主界面显示最近 3 条。内部自动重连和 GUI 外层重试按恢复过程去重；历史文件采用原子替换，损坏文件先备份再写入。
 
 ## 配合学校官方客户端
 
@@ -165,8 +168,8 @@ Python 测试覆盖 GUI、凭据存储、通知、自启动、路径与模拟交
 ```text
 build/
 ├─ CampusTerminal/                              # 可运行的完整便携目录
-├─ CampusTerminal-1.3.18-windows-x64-portable.zip
-└─ CampusTerminal-1.3.18-windows-x64-setup.exe
+├─ CampusTerminal-1.3.19-windows-x64-portable.zip
+└─ CampusTerminal-1.3.19-windows-x64-setup.exe
 ```
 
 输出包含程序、默认配置、支持脚本、资源和许可文件。`-OutputRoot` 可以指向仓库外的专用构建目录。打包完成后，运行生成的启动器进行首次环境配置。
