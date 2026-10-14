@@ -58,7 +58,7 @@ internal sealed class WindowsNpcapPlatform : INpcapSetupPlatform
             var request = (HttpWebRequest)WebRequest.Create(InstallerUrl);
             request.Timeout = 60000;
             request.ReadWriteTimeout = 60000;
-            request.UserAgent = "CampusTerminal/1.3.19";
+            request.UserAgent = ProductUserAgent();
             using (var response = (HttpWebResponse)request.GetResponse())
             using (var input = response.GetResponseStream())
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -106,5 +106,14 @@ internal sealed class WindowsNpcapPlatform : INpcapSetupPlatform
         process.WaitForExit();
         log("Npcap 安装器退出码：" + process.ExitCode);
         return process.ExitCode;
+    }
+
+    static string ProductUserAgent()
+    {
+        var version = typeof(WindowsNpcapPlatform).Assembly.GetName().Version;
+        int build = version != null && version.Build >= 0 ? version.Build : 0;
+        int major = version != null ? version.Major : 0;
+        int minor = version != null ? version.Minor : 0;
+        return "CampusTerminal/" + major + "." + minor + "." + build;
     }
 }

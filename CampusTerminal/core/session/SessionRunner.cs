@@ -37,7 +37,8 @@ internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clo
         var nextHeartbeat = TimeSpan.MaxValue;
         var windowStart = startTime;
         TimeSpan? authenticatedAt = null, boundAt = null;
-        bool authenticated = false, established = false, addressWaitingLogged = false;
+        bool authenticated = false, established = false, addressWaitingLogged = false, reauthenticating = false;
+        TimeSpan? reauthStarted = null;
         SessionResult Finish(string reason) { log(reason); return new(reason, authenticated, sent, heartbeats, established); }
         string? DeadlineReason()
         {
@@ -70,6 +71,9 @@ internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clo
         {
             progress?.Invoke();
             if (cancellation.IsCancellationRequested) return Finish("Cancelled");
+            if (reauthenticating && reauthStarted is { } began &&
+                clock.Elapsed - began >= ConnectionRetryPolicy.AttemptTimeout)
+                return Finish("ConnectionAttemptTimeout");
             var blocked = blockReason();
             if (blocked != null) return Finish(blocked);
             var expired = DeadlineReason();
@@ -89,6 +93,13 @@ internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clo
                 var step = protocol.Receive(frame);
                 if (!step.Event.StartsWith("Ignored", StringComparison.Ordinal)) log(step.Event);
                 if (protocol.State == Phase.Failed) return Finish("ProtocolFailed");
+                if (step.Event == "PeriodicReauthentication")
+                {
+                    reauthenticating = true;
+                    reauthStarted = clock.Elapsed;
+                    starts = 0;
+                    nextStart = clock.Elapsed;
+                }
                 if (step.Response != null)
                 {
                     blocked = Send(step.Response); if (blocked != null) return Finish(blocked);
@@ -98,9 +109,16 @@ internal sealed class SessionRunner(IFrameTransport transport, ISessionClock clo
                     authenticated = true;
                     nextHeartbeat = clock.Elapsed + TimeSpan.FromSeconds(30);
                 }
+                else if (reauthenticating && protocol.State == Phase.Authenticated)
+                {
+                    reauthenticating = false;
+                    reauthStarted = null;
+                    nextHeartbeat = clock.Elapsed + TimeSpan.FromSeconds(30);
+                }
             }
             if (authenticated && protocol.AddressBound) boundAt ??= clock.Elapsed;
-            if (authenticated && protocol.AddressBound && clock.Elapsed >= nextHeartbeat)
+            if (authenticated && !reauthenticating && protocol.State == Phase.Authenticated &&
+                protocol.AddressBound && clock.Elapsed >= nextHeartbeat)
             {
                 var step = protocol.PeriodicHeartbeat();
                 if (step.Response == null) return Finish("HeartbeatUnavailable");

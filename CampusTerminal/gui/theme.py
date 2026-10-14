@@ -39,7 +39,7 @@ INNER = (467.96 - OX, 512.44 - OY, 2020.97, 3068.95, 104.02)
 BANNER = (597.88 - OX, 0.0, 681.61, 76.18, 19.04)
 TITLE = (633.39 - OX, 520.03 - OY)
 VERSION = (1119.32 - OX, 518.51 - OY)
-APP_VERSION = "1.3.19"
+APP_VERSION = "1.4.1"
 
 
 def _w(items):
@@ -188,6 +188,7 @@ SET_AUTOS = [
     (2745.80 - SX, 3235.07 - SY, "流量异常时自动尝试重新连接(默认)", "auto_reconnect"),
     (2745.80 - SX, 3338.62 - SY, "会话保活(beta) · 尚未支持", "seamless"),
     (2745.80 - SX, 3453.47 - SY, "学校官方客户端自动重连兜底", "inode_fallback"),
+    (2745.80 - SX, 3568.32 - SY, "发现新版本后自动更新并重启", "auto_update"),
 ]
 SET_AUTO_ICON = (74.0, 70.0)
 SET_AUTO_TEXT_DX = 2851.7 - 2745.80
@@ -197,6 +198,9 @@ SET_AUTO_TEXT_DY = 2952.1 - 2892.93
 SET_IP_SHIFT = 373.05
 SET_IP_BOX = (SET_NIC_BOX[0], SET_TYPE_BOX[1], SET_NIC_BOX[2], 327.78, 81.94)
 SET_H += SET_IP_SHIFT
+SET_AUTO_EXTRA = 130
+SET_AUTO_BOX = (SET_AUTO_BOX[0], SET_AUTO_BOX[1], SET_AUTO_BOX[2], SET_AUTO_BOX[3] + SET_AUTO_EXTRA, SET_AUTO_BOX[4])
+SET_H += SET_AUTO_EXTRA
 
 C_OUTER = QColor("#444444")
 C_INNER = QColor("#242424")

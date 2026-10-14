@@ -6,10 +6,13 @@ from PyQt5.QtGui import QPainter, QPainterPath
 from gui import theme as T
 from gui.home.page import HomePage
 from gui.settings.page import SettingsPage
+from gui.bridge.update import display_version
 from gui.shell.banner import paint_chrome
 from gui.shell.close_btn import CloseButton
 from gui.shell.notice_dialog import NoticeOverlay
 from gui.shell.resizable import DesignLayout, ResizableWindow
+from gui.shell.update_chip import UpdateChip
+from gui.shell.update_dialog import IgnoreConfirm, UpdateChoice
 
 
 def settings_position(main, panel_size, available, gap):
@@ -40,6 +43,7 @@ class MainWindow(ResizableWindow):
         self.resize(round(T.WIN_W * scale), round(T.WIN_H * scale))
         self.setWindowTitle("开源暨珠有线网络终端")
         self.setWindowIcon(T.app_icon())
+        self.product_version = display_version()
         self.home = HomePage(scale, family, self)
         self.home.setGeometry(0, 0, self.width(), self.height())
         self.settings = SettingsPage(scale, family, self)
@@ -53,6 +57,10 @@ class MainWindow(ResizableWindow):
         self.settings.back.connect(self.show_home)
         self.settings.back_hit.setToolTip("收起设置")
         self._layout = DesignLayout(self.home, scale)
+        self.update_chip = UpdateChip(self.home)
+        self.update_choice = UpdateChoice(self)
+        self.update_confirm = IgnoreConfirm(self)
+        self.update_chip.place(scale, family)
         self.enable_resize(self.width(), self.height())
 
     def resizeEvent(self, event):
@@ -63,12 +71,15 @@ class MainWindow(ResizableWindow):
         w, h = round(T.WIN_W * self.scale), round(T.WIN_H * self.scale)
         self.home.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
         self._layout.apply(self.scale)
+        self.update_chip.place(self.scale, self.family)
         self.close_btn.scale = self.scale
         cx, cy, r = T.CLOSE_C
         self.close_btn.setGeometry(self.width() - round(2 * r * self.scale),
                                    round((cy - r) * self.scale),
                                    round(2 * r * self.scale), round(2 * r * self.scale))
         self.notice.setGeometry(self.rect())
+        for overlay in (self.update_choice, self.update_confirm):
+            overlay.setGeometry(self.rect())
         if self.settings.isVisible():
             self._position_settings()
         self._place_grips()
@@ -142,7 +153,7 @@ class MainWindow(ResizableWindow):
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), T.OUTER_R * self.scale, T.OUTER_R * self.scale)
         painter.setClipPath(path)
-        paint_chrome(painter, self.scale, self.family, self.width(), self.height(), self.home.pos())
+        paint_chrome(painter, self.scale, self.family, self.width(), self.height(), self.home.pos(), self.product_version)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.y() < 90 * self.scale:

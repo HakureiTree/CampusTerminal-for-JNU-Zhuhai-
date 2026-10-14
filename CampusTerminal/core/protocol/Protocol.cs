@@ -19,6 +19,7 @@ internal sealed class Protocol : IDisposable
     private byte[]? server, token, lastRequest, lastResponse;
     private byte md5Identifier;
     private byte initialIdentifier;
+    private bool periodicReauthentication;
     public Phase State { get; private set; } = Phase.WaitingIdentity;
     public bool HasVendorToken => token != null;
     public bool AddressBound { get; private set; }
@@ -54,6 +55,16 @@ internal sealed class Protocol : IDisposable
         if (State != Phase.Authenticated || server == null) return null;
         State = Phase.Failed;
         return Envelope(server, 2, []);
+    }
+
+    private Step BeginPeriodicReauthentication()
+    {
+        if (token != null) { CryptographicOperations.ZeroMemory(token); token = null; }
+        lastRequest = null;
+        if (lastResponse != null) { CryptographicOperations.ZeroMemory(lastResponse); lastResponse = null; }
+        State = Phase.WaitingIdentity;
+        periodicReauthentication = true;
+        return new("PeriodicReauthentication");
     }
 
     private byte[] CampusHeartbeatPayload()
@@ -104,6 +115,11 @@ internal sealed class Protocol : IDisposable
         {
             if (State == Phase.WaitingMd5 && id != initialIdentifier) return new("IgnoredStaleFailure");
             if (State == Phase.WaitingSuccess && id != md5Identifier) return new("IgnoredStaleFailure");
+            // H3C reauthenticates a live session with EAP Failure, then waits for a new Start.
+            // Tearing the session down here is what made the client reconnect every 12 minutes.
+            if (State == Phase.WaitingIdentity && periodicReauthentication) return new("IgnoredStaleFailure");
+            if (State == Phase.Authenticated && AddressBound && server != null)
+                return BeginPeriodicReauthentication();
             return Fail("AuthenticationRejected");
         }
         if (code == 3)
@@ -134,6 +150,7 @@ internal sealed class Protocol : IDisposable
             case 1:
                 if (State == Phase.WaitingIdentity)
                 {
+                    periodicReauthentication = false;
                     initialIdentifier = id;
                     payload = Join([6, 7], version, [32, 32], username);
                     State = Phase.WaitingMd5;

@@ -13,7 +13,20 @@ class Notice:
 
 
 def is_confirm(notice):
-    return getattr(notice, "kind", "confirm") != "remind"
+    return getattr(notice, "kind", "confirm") not in ("remind", "progress")
+
+
+def dismisses_itself(notice):
+    return getattr(notice, "kind", "confirm") in ("remind", "progress")
+
+
+def toast_ms(notice):
+    kind = getattr(notice, "kind", "confirm")
+    if kind == "progress":
+        return 30000
+    if kind == "remind":
+        return remind_ms(notice)
+    return 8000
 
 
 def remind_ms(notice):

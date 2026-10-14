@@ -47,7 +47,7 @@ internal static class GuiHost
             "CampusTerminal", "logs"));
         diagnostics = new RuntimeDiagnostics((stage, detail) => journal.Write(stage, detail));
         AutoFailureBudget.ResetOnStart();
-        journal.Write("BackendStarted", new { version = "CampusTerminal-1.3.19" });
+        journal.Write("BackendStarted", new { version = ProductVersion() });
         RecoveryLog.UseStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "CampusTerminal", "recovery-events.json"), diagnosis => journal.Write("RecoveryLogError", new { diagnosis }));
         UnhandledExceptionEventHandler fatalHandler = (_, e) =>
@@ -169,6 +169,13 @@ internal static class GuiHost
         return new { errorType = Bounded(ex.GetType().Name, 128), frames };
     }
 
+    private static string ProductVersion()
+    {
+        var version = typeof(GuiHost).Assembly.GetName().Version;
+        int build = version is { Build: >= 0 } ? version.Build : 0;
+        return "CampusTerminal-" + (version?.Major ?? 0) + "." + (version?.Minor ?? 0) + "." + build;
+    }
+
     private static string Bounded(string? value, int max) => string.IsNullOrEmpty(value) ? "unknown" : value[..Math.Min(value.Length, max)];
 
     private static void Watchdog(CancellationToken token)
@@ -184,7 +191,7 @@ internal static class GuiHost
     private static object Status(int id)
     {
         lock (Gate)
-            return new { ok = true, id, version = "CampusTerminal-1.3.19", processId = Environment.ProcessId,
+            return new { ok = true, id, version = ProductVersion(), processId = Environment.ProcessId,
                 alternative = Adapters.AlternativePath(Guid.Empty),
                 executable = Environment.ProcessPath,
                 phase, error, firstError, acceptanceActive, heartbeatCount,
@@ -201,7 +208,7 @@ internal static class GuiHost
 
     private static object SafeHeartbeatStatus()
     {
-        lock (Gate) return new { version = "CampusTerminal-1.3.19", phase, active = session != null,
+        lock (Gate) return new { version = ProductVersion(), phase, active = session != null,
             generation, heartbeatCount, loggingError = journal?.Error };
     }
 
@@ -438,7 +445,7 @@ internal static class GuiHost
                     ["result"] = JsonNode.Parse(stage["ProbeEvidence:".Length..]) };
             }
             if (stage == "AuthenticationGenerationStarted") phase = generation == 0 ? "connecting" : "recovering";
-            if (stage == "EapSuccessNotConnectivityVerified" || stage == "AuthenticatedAddressBound") phase = "verifying";
+            if ((stage == "EapSuccessNotConnectivityVerified" || stage == "AuthenticatedAddressBound") && phase != "online") phase = "verifying";
             if (stage == "TwoCampusRoundsPassed")
             {
                 AutoFailureBudget.Reset();

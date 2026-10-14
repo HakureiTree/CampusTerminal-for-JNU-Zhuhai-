@@ -2,7 +2,7 @@
 """Exclusive routing: visible window -> in-app dialog; hidden -> tray toast."""
 from PyQt5.QtCore import QTimer
 
-from gui.shell.notifications import Notice, is_confirm, remind_ms
+from gui.shell.notifications import Notice, is_confirm, toast_ms
 
 
 class AlertRouter:
@@ -86,8 +86,7 @@ class AlertHost:
         if self.tray:
             if route.toast is not None:
                 confirm = is_confirm(route.toast)
-                self.tray.notify(route.toast, raise_main=confirm,
-                                 timeout_ms=8000 if confirm else remind_ms(route.toast))
+                self.tray.notify(route.toast, raise_main=confirm, timeout_ms=toast_ms(route.toast))
                 if confirm:
                     self._ignore.start()
                 else:

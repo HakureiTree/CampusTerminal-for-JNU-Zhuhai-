@@ -71,6 +71,15 @@ Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $out -Recurse
 Set-Content -LiteralPath (Join-Path $out 'CampusTerminal.portable') -Value 'CampusTerminal portable' -Encoding ascii
 Set-Content -LiteralPath (Join-Path $out 'edition.txt') -Value 'portable' -Encoding ascii
 Set-Content -LiteralPath (Join-Path $out 'version.txt') -Value $version -Encoding ascii
+Copy-Item -LiteralPath (Join-Path $pack 'Apply-Update.ps1') -Destination $out -Force
+$readmePath = Join-Path $out 'README.txt'
+$readmeLines = [IO.File]::ReadAllLines($readmePath)
+$title = "开源暨珠有线网络终端 $version"
+$readmeLines[0] = $title
+if ($readmeLines.Length -gt 1) { $readmeLines[1] = ('=' * $title.Length) }
+[IO.File]::WriteAllLines($readmePath, $readmeLines)
+& $Python (Join-Path $pack 'update_package.py') release --source $out --output $OutputRoot --version $version
+if ($LASTEXITCODE -ne 0) { throw 'Update package failed' }
 $zip=Join-Path $OutputRoot "CampusTerminal-$version-windows-x64-portable.zip"
 Compress-Archive -LiteralPath $out -DestinationPath $zip -Force
 Write-Output "Portable folder: $out"

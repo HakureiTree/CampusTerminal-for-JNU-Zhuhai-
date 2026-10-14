@@ -31,6 +31,8 @@ class AutoBlock(QWidget):
             if key == "seamless":
                 toggle.setEnabled(False)
                 toggle.setToolTip("不伪造网络特征。自动重连会保留网卡、IP、路由和代理配置；不保证应用会话存活。")
+            if key == "auto_update":
+                toggle.setToolTip("默认关闭。开启后，每次启动若发现高于当前版本和已忽略版本的正式版，将自动增量更新并重启，只用通知提示，不再询问。")
         self.toggles["auto_start"].setChecked(True)
         self.toggles["auto_connect"].setChecked(True)
         self.toggles["auto_reconnect"].setChecked(True)

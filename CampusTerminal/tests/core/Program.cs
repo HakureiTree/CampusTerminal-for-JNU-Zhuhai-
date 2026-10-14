@@ -96,6 +96,8 @@ Check(RecoveryLog.Recent().Length == 0, "The first login is not listed as an aut
 RecoveryLog.BeginCampaign("campaign-a");
 RecoveryLog.Observe(1, "AuthenticationGenerationStarted");
 RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
+RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
+Check(RecoveryLog.Recent().Length == 1, "A later health check is not another reconnect");
 RecoveryLog.EndCampaign();
 RecoveryLog.BeginCampaign("campaign-b");
 RecoveryLog.Observe(2, "AuthenticationGenerationStarted");
@@ -128,6 +130,25 @@ using (var protocol = New())
         "Unmatched leftover EAP Failure before MD5 is not a password reject");
     Check(protocol.Receive(Eap(4, 1, [])).Event == "AuthenticationRejected", "Identity-id Failure remains a real reject");
 }
+using (var protocol = New())
+{
+    protocol.Receive(Eap(1, 1, [1]));
+    protocol.Receive(Eap(1, 2, new byte[] { 4, 16 }.Concat(new byte[16]).ToArray()));
+    Check(protocol.Receive(Eap(3, 2, [])).Event == "EapSuccessNotConnectivityVerified", "MD5 success reaches authenticated");
+    var again = protocol.Receive(Eap(4, 9, []));
+    Check(again.Event == "PeriodicReauthentication" && protocol.State == Phase.WaitingIdentity,
+        "EAP Failure after success starts in-place reauthentication");
+    Check(protocol.AddressBound, "Periodic reauthentication retains the bound campus address");
+    Check(protocol.Receive(Eap(4, 9, [])).Event == "IgnoredStaleFailure" && protocol.State == Phase.WaitingIdentity,
+        "Retransmitted Failure during reauthentication is ignored");
+    Check(protocol.Receive(Eap(1, 3, [1])).Event == "IdentityResponsePrepared" && protocol.State == Phase.WaitingMd5,
+        "Reauthentication answers the next identity request");
+    protocol.Receive(Eap(1, 4, new byte[] { 4, 16 }.Concat(new byte[16]).ToArray()));
+    protocol.Receive(Eap(3, 4, []));
+    Check(protocol.State == Phase.Authenticated && protocol.AddressBound &&
+        Encoding.ASCII.GetString(protocol.PeriodicHeartbeat().Response!).Contains("192.0.2.1", StringComparison.Ordinal),
+        "Successful reauthentication resumes heartbeats on the original address");
+}
 
 using (var cancel = new CancellationTokenSource())
 using (var wire = new Wire())
@@ -147,6 +168,36 @@ using (var wire = new Wire())
     var result = new ManagedSession(wire, clock, New, () => cancel.IsCancellationRequested ? "OriginalClientRunning" : null,
         _ => {}, _ => true, _ => null, new Budget(), _ => {}).Run(Timeout.InfiniteTimeSpan, cancel.Token);
     Check(!result.LogoffSent && wire.Logoffs == 0, "Ownership loss forbids cleanup packet");
+}
+var reauthLog = new List<string>();
+int reauthGenerations = 0;
+using (var cancel = new CancellationTokenSource())
+using (var wire = new ReauthWire())
+{
+    var clock = new Clock();
+    clock.OnPause = () => { if (wire.Starts >= 2 && clock.Elapsed > TimeSpan.FromSeconds(35)) cancel.Cancel(); };
+    var result = new ManagedSession(wire, clock, New, () => null, reauthLog.Add, _ => true,
+        _ => new ReadyMonitor(), new Budget(), _ => reauthGenerations++).Run(Timeout.InfiniteTimeSpan, cancel.Token);
+    Check(result.Session.Reason == "Cancelled", "In-place reauthentication does not end the session");
+    Check(reauthGenerations == 1, "Periodic EAP Failure does not start another generation");
+    Check(wire.Starts == 2, "The switch Failure is answered with one new EAPOL-Start");
+    Check(reauthLog.Contains("PeriodicReauthentication"), "The Failure is logged as periodic reauthentication");
+    Check(!reauthLog.Contains("ProtocolFailed") && !reauthLog.Contains("SessionEnded"), "A periodic Failure is not a protocol failure");
+    Check(result.LogoffSent && wire.Logoffs == 1, "The session still logs off once when cancelled");
+}
+using (var cancel = new CancellationTokenSource())
+using (var wire = new ReauthWire(answerReauthentication: false))
+{
+    using var protocol = New();
+    var clock = new Clock();
+    clock.OnPause = () => { if (clock.Elapsed > TimeSpan.FromSeconds(45)) cancel.Cancel(); };
+    var log = new List<string>();
+    var result = new SessionRunner(wire, clock, () => null, log.Add, _ => true,
+        _ => null, () => true).Run(protocol, Timeout.InfiniteTimeSpan, cancel.Token);
+    Check(result.Reason == "ConnectionAttemptTimeout" && log.Contains("PeriodicReauthentication"),
+        "An unanswered periodic reauthentication keeps the normal retryable timeout cause");
+    Check(clock.Elapsed >= TimeSpan.FromSeconds(36) && clock.Elapsed < TimeSpan.FromSeconds(37),
+        "Periodic reauthentication is bounded by the existing six-second attempt budget");
 }
 bool enabled = false;
 using (var monitor = new RecoveryMonitor(new Sampler(), new Probe(), "192.0.2.1", _ => {}, recoveryEnabled: () => enabled))
@@ -196,6 +247,24 @@ try
         .RootElement.GetProperty("status").GetProperty("phase").GetString() == "online", "Fresh backend status persists independently of GUI");
 }
 finally { Directory.Delete(logFolder, true); }
+{
+    const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+    var phaseField = typeof(GuiHost).GetField("phase", flags)!;
+    var note = typeof(GuiHost).GetMethod("Note", flags)!;
+    var originalPhase = phaseField.GetValue(null);
+    try
+    {
+        phaseField.SetValue(null, "online");
+        note.Invoke(null, ["EapSuccessNotConnectivityVerified"]);
+        Check((string?)phaseField.GetValue(null) == "online", "Reauthentication success keeps the host online");
+        note.Invoke(null, ["AuthenticatedAddressBound"]);
+        Check((string?)phaseField.GetValue(null) == "online", "Address confirmation keeps the host online");
+        phaseField.SetValue(null, "connecting");
+        note.Invoke(null, ["EapSuccessNotConnectivityVerified"]);
+        Check((string?)phaseField.GetValue(null) == "verifying", "First authentication still requires connectivity verification");
+    }
+    finally { phaseField.SetValue(null, originalPhase); }
+}
 LoggingChecks.Run(Check);
 Console.WriteLine($"PASS: {checks} backend checks; only simulated authentication frames.");
 
@@ -257,6 +326,51 @@ sealed class Wire : IFrameTransport
         frame[18]=code; frame[19]=id;
         BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(20), (ushort)(4+payload.Length));
         payload.CopyTo(frame,22);
+        return frame;
+    }
+}
+sealed class ReadyMonitor : ISessionMonitor
+{
+    public bool Verified => true;
+    public bool Held => false;
+    public string? Tick(TimeSpan now) => null;
+    public void Dispose() { }
+}
+sealed class ReauthWire(bool answerReauthentication = true) : IFrameTransport
+{
+    readonly Queue<byte[]> frames = new();
+    int dataSends;
+    bool injected;
+    public int Starts, Logoffs;
+    public byte[]? Poll() => frames.TryDequeue(out var value) ? value : null;
+    public void Dispose() { }
+    public void Send(byte[] frame)
+    {
+        if (frame[15] == 2) { Logoffs++; return; }
+        if (frame[15] == 1)
+        {
+            Starts++;
+            if (Starts > 1 && !answerReauthentication) return;
+            frames.Enqueue(Frame(1, 1, [1]));
+            frames.Enqueue(Frame(1, 2, new byte[] { 4, 16 }.Concat(new byte[16]).ToArray()));
+            frames.Enqueue(Frame(3, 2, []));
+            return;
+        }
+        if (frame[15] != 0) return;
+        if (++dataSends == 3 && !injected)
+        {
+            injected = true;
+            frames.Enqueue(Frame(4, 7, []));
+        }
+    }
+    static byte[] Frame(byte code, byte id, byte[] payload)
+    {
+        var frame = new byte[22 + payload.Length];
+        new byte[] { 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 2, 0x88, 0x8e, 1, 0 }.CopyTo(frame, 0);
+        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(16), (ushort)(4 + payload.Length));
+        frame[18] = code; frame[19] = id;
+        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(20), (ushort)(4 + payload.Length));
+        payload.CopyTo(frame, 22);
         return frame;
     }
 }

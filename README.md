@@ -7,7 +7,7 @@
 <p>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="许可证：GPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-GPL--3.0-2563EB?style=flat&logo=gnu&logoColor=white" /></a>
   <img alt="平台：Windows 10 / 11" src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011-0078D4?style=flat&logo=windows&logoColor=white" />
-  <img alt="版本：1.3.19" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.3.19-3F6212?style=flat" />
+  <img alt="版本：1.4.1" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.4.1-3F6212?style=flat" />
 </p>
 
 <p>
@@ -40,7 +40,9 @@
 
 ## 功能
 
-- 普通 802.1X 认证（EAPOL / EAP-MD5）、周期心跳、正常注销
+- 普通 802.1X 认证（EAPOL / EAP-MD5）、周期心跳、原地重认证和正常注销
+- 检查 GitHub 新版本，查看更新说明、立即更新或忽略该版本
+- 可选自动更新并重启，按文件更新并保留设置、日志和安装类型
 - 主窗口和设置窗口支持拖动边框缩放，保留输入内容和勾选状态
 - 显示当前校园网卡的上传和下载速率
 - 设置中显示所选网卡的当前 IPv4 地址，每次连接或重连成功后刷新，可选中复制
@@ -55,7 +57,7 @@
 程序或计算机重新启动后，自动重连的失败次数清零。
 
 > [!NOTE]
-> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.3.19/README.md)。
+> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.4.1/README.md)。
 
 ## 环境
 
@@ -71,9 +73,9 @@
 
 ## 使用
 
-完整发行说明和校验文件见 [GitHub Release v1.3.19](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.3.19)。
+完整发行说明和校验文件见 [GitHub Release v1.4.1](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.4.1)。
 
-1. 下载 [1.3.19 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.19/CampusTerminal-1.3.19-windows-x64-setup.exe) 或 [1.3.19 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.3.19/CampusTerminal-1.3.19-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
+1. 下载 [1.4.1 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.1/CampusTerminal-1.4.1-windows-x64-setup.exe) 或 [1.4.1 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.1/CampusTerminal-1.4.1-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
 2. 启动器检查本机环境；首次配置时同意管理员授权。如弹出 Npcap 安装窗口，按向导完成安装，随后自动继续配置并打开终端。
 3. 填写学号和密码，选择有线网卡，用普通连接登入。
 4. 点窗口关闭，程序缩到右下角托盘，继续保持认证。要停止时，在托盘菜单里选「退出程序」。
@@ -81,6 +83,14 @@
 便携版的设置和凭据位于解压目录 `state/`；安装版位于 `%APPDATA%\CampusTerminal`，默认安装位置是 `%LOCALAPPDATA%\Programs\CampusTerminal`。安装版可从 Windows 应用列表卸载，卸载会保留用户设置和日志。升级或卸载前请先从托盘退出终端。
 
 各版本按 `release/<版本号>/` 保存安装包、便携包、发行说明和 SHA-256 校验值，第一版为 **1.3.18**。
+
+### 版本更新
+
+启动时检查 GitHub 正式版。发现新版本后，点击主界面提示查看「更新」「修复」说明，再选择更新或忽略该版本。
+
+「发现新版本后自动更新并重启」默认关闭，可在设置中启用。更新包通过 SHA-256 校验，优先使用匹配当前版本的增量包，也支持完整更新包。程序按文件替换变化内容，保留设置、日志和安装类型，失败时回滚。忽略的版本会随设置保存。
+
+内置更新从 1.4.1 开始提供。旧版请通过安装包升级，或在原便携目录完整解压覆盖程序文件并保留 `state/`。更新期间会短暂断开校园网认证，完成后重新打开终端。
 
 ### 日志
 
@@ -140,7 +150,7 @@ dotnet run --project .\CampusTerminal\tests\launcher\LauncherTests.csproj -c Rel
 Remove-Item Env:\QT_QPA_PLATFORM
 ```
 
-Python 测试覆盖 GUI、凭据存储、通知、自启动、路径与模拟交还流程。C# 核心测试使用模拟认证帧；启动器测试通过模拟平台覆盖 Npcap 检测、安装成功、取消、重启和下载失败等情况。本机已有认证后台运行时，会跳过需要拉起测试后台的用例，保留当前会话。
+Python 测试覆盖 GUI、凭据存储、通知、自启动、路径、更新说明排版、自动更新和模拟交还流程。C# 核心测试使用模拟认证帧；启动器测试通过模拟平台覆盖 Npcap 检测、安装成功、取消、重启和下载失败等情况。本机已有认证后台运行时，会跳过需要拉起测试后台的用例，保留当前会话。
 
 ### 生成便携版和安装版
 
@@ -168,11 +178,21 @@ Python 测试覆盖 GUI、凭据存储、通知、自启动、路径与模拟交
 ```text
 build/
 ├─ CampusTerminal/                              # 可运行的完整便携目录
-├─ CampusTerminal-1.3.19-windows-x64-portable.zip
-└─ CampusTerminal-1.3.19-windows-x64-setup.exe
+├─ CampusTerminal-1.4.1-windows-x64-portable.zip
+├─ CampusTerminal-1.4.1-windows-x64-setup.exe
+├─ CampusTerminal-1.4.1-windows-x64-payload.zip    # 内置更新的完整文件包
+└─ update-manifest.json                         # 版本、文件哈希和更新包清单
 ```
 
-输出包含程序、默认配置、支持脚本、资源和许可文件。`-OutputRoot` 可以指向仓库外的专用构建目录。打包完成后，运行生成的启动器进行首次环境配置。
+输出包含程序、默认配置、支持脚本、资源、许可文件和内置更新所需的清单与完整文件包。`-OutputRoot` 可以指向仓库外的专用构建目录。打包完成后，运行生成的启动器进行首次环境配置。
+
+后续版本可使用 `CampusTerminal/packaging/New-UpdateDelta.ps1`，根据上一版和新版的清单生成增量包：
+
+```powershell
+.\CampusTerminal\packaging\New-UpdateDelta.ps1 -BaseManifest .\release\1.4.1\update-manifest.json -NewManifest .\build\update-manifest.json -NewTree .\build\CampusTerminal -OutputDir .\build -Python .\.venv\Scripts\python.exe
+```
+
+发行时将生成的 `update-manifest.json`、完整更新包和增量包一起上传到 GitHub Release，并上传含「更新」「修复」说明的 `README.md`，供客户端读取。
 
 ### 源码布局
 

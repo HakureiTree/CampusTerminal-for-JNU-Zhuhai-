@@ -152,6 +152,14 @@ internal static class LoggingChecks
             string history = Path.Combine(root, "history.json");
             RecoveryLog.UseStore(history);
             check(!RecoveryLog.BeginCampaign(null) && RecoveryLog.Recent().Length == 0, "Normal connection without campaign metadata adds no history");
+            RecoveryLog.BeginCampaign("health-check-deduplication");
+            check(RecoveryLog.Recent()[^1]["result"]!.GetValue<string>() == "重连中", "Recovery starts as a pending history row");
+            RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
+            check(RecoveryLog.Recent().Length == 1 && RecoveryLog.Recent()[^1]["result"]!.GetValue<string>() == "成功",
+                "A pending recovery is completed in place");
+            for (int repeat = 0; repeat < 30; repeat++) RecoveryLog.Observe(0, "TwoCampusRoundsPassed");
+            check(RecoveryLog.Recent().Length == 1 && RecoveryLog.Recent()[^1]["result"]!.GetValue<string>() == "成功",
+                "Repeated healthy status does not append more successful recoveries");
             for (int i = 0; i < 105; i++)
             {
                 string id = "campaign-" + i;

@@ -49,6 +49,8 @@ DEFAULTS = {
     "auto_reconnect": True,
     "seamless": False,
     "inode_fallback": False,
+    "auto_update": False,
+    "ignored_version": "",
 }
 
 

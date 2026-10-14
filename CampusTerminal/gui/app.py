@@ -6,7 +6,7 @@ import sys
 import threading
 import uuid
 
-from PyQt5.QtCore import QTimer, QUrl, Qt
+from PyQt5.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal
 from PyQt5.QtGui import QDesktopServices, QGuiApplication
 from PyQt5.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
@@ -28,6 +28,9 @@ from gui.shell.notifications import Notice, NotificationPolicy
 from gui.shell.tray import AppTray, allow_taskbar_created
 from gui.shell.window import MainWindow
 from gui.bridge.startup import show_main_on_launch
+from gui.bridge.update import (
+    apply_script_path, consume_result, fetch_offer, format_version, local_version,
+    offer_visible, parse_version, prepare_transaction, spawn_apply)
 from gui.shell.instance import SingleInstance, claim_primary, ping
 
 
@@ -350,6 +353,14 @@ def _main_impl(cleanup):
             address_refresh.observe("error", None)
             lost = result.get("error") == "BackendUnavailable" and runtime["active"]
             err = result.get("firstError") or result.get("error")
+            if method in ("connect", "ensure_started") and err == "AlreadyConnected":
+                runtime["active"] = True
+                runtime["auto_due"] = False
+                trace.emit("backend_error", method=method, error=err)
+                if not backend.busy:
+                    backend.submit("status")
+                pump()
+                return
             if result.get("alternative") or err == "AlternativeNetworkPath":
                 runtime["core_alternative"] = True
                 runtime["yielded_network"] = True
@@ -584,6 +595,8 @@ def _main_impl(cleanup):
                 runtime["disconnect"] = True
             elif runtime["phase"] == "error":
                 sync_phase("idle", quiet=True)
+        elif runtime.get("update_hold") or runtime.get("update_applying"):
+            runtime["auto_due"] = False
         elif want_auto_connect(data.get("auto_connect"), runtime["manual_stop"], runtime["handed_back"], has_nic, has_creds):
             runtime["released_for_other"] = False
             runtime["other_noted"] = False
@@ -740,6 +753,147 @@ def _main_impl(cleanup):
         window.home.login.account.editingFinished.disconnect(persist_login)
         window.home.login.password.editingFinished.disconnect(persist_login)
     app.aboutToQuit.connect(stop_ui_callbacks)
+    class _UpdateSignals(QObject):
+        checked = pyqtSignal(object)
+        ready = pyqtSignal(object)
+        failed = pyqtSignal(str)
+
+    update_signals = _UpdateSignals(window)
+
+    def release_update_hold(allow_connect):
+        if not runtime.get("update_hold"):
+            return
+        runtime["update_hold"] = False
+        due = runtime.pop("update_hold_due", False)
+        if allow_connect and due and not runtime["closing"]:
+            runtime["auto_due"] = True
+            QTimer.singleShot(0, tick)
+
+    def report_update_result():
+        payload = consume_result()
+        if payload and not payload.get("ok"):
+            alerts.deliver(Notice("更新未完成", str(payload.get("error") or "更新没有完成，仍在使用当前版本。"), "warning", "confirm"))
+
+    def shutdown_for_update():
+        runtime["quit"] = True
+        runtime["auto_due"] = False
+        runtime["manual_stop"] = True
+        if tray:
+            tray.hide()
+        pump()
+
+    def begin_apply(offer):
+        if runtime.get("update_applying") or runtime["closing"] or not isinstance(offer, dict):
+            return
+        version = str(offer.get("version") or "")
+        if not frozen():
+            alerts.deliver(Notice("无法在源码运行中更新", "请使用安装版或便携版更新。", "warning", "confirm"))
+            release_update_hold(True)
+            return
+        runtime["update_applying"] = True
+        window.update_chip.setEnabled(False)
+        alerts.deliver(Notice(
+            "正在更新",
+            "正在更新到 V" + version + "。更新时会短暂断开校园网认证，完成后自动重新打开。",
+            "information", "progress"))
+        root = install_root()
+        script = apply_script_path(root, True)
+
+        def work():
+            try:
+                prepared = prepare_transaction(root, offer, silent_launch, os.getpid(), script)
+            except Exception as exc:
+                update_signals.failed.emit(type(exc).__name__ + ": " + str(exc)[:160])
+                return
+            update_signals.ready.emit(prepared)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_ready(prepared):
+        if runtime["closing"]:
+            return
+        if not prepared:
+            runtime["update_applying"] = False
+            window.update_chip.setEnabled(True)
+            window.update_chip.set_version("")
+            release_update_hold(True)
+            return
+        try:
+            spawn_apply(prepared["script"], prepared["transaction"])
+        except OSError as exc:
+            runtime["update_applying"] = False
+            window.update_chip.setEnabled(True)
+            alerts.deliver(Notice("更新未完成", str(exc)[:180], "warning", "confirm"))
+            release_update_hold(True)
+            return
+        shutdown_for_update()
+
+    def on_update_failed(message):
+        runtime["update_applying"] = False
+        window.update_chip.setEnabled(True)
+        alerts.deliver(Notice("更新未完成", message or "更新没有完成，仍在使用当前版本。", "warning", "confirm"))
+        release_update_hold(True)
+
+    def on_update_checked(offer):
+        if runtime["closing"]:
+            return
+        report_update_result()
+        local = local_version(install_root(), frozen(), T.APP_VERSION)
+        ignored = parse_version(data.get("ignored_version"))
+        remote = parse_version(offer.get("version")) if isinstance(offer, dict) else None
+        if not offer_visible(local, remote, ignored):
+            window.update_chip.set_version("")
+            release_update_hold(True)
+            return
+        window.update_chip.set_version(format_version(remote))
+        window._update_offer = offer
+        if data.get("auto_update"):
+            begin_apply(offer)
+        else:
+            release_update_hold(True)
+
+    def show_update_choice():
+        offer = getattr(window, "_update_offer", None)
+        if not isinstance(offer, dict) or runtime.get("update_applying"):
+            return
+        window.update_choice.show_offer(str(offer.get("version") or ""), offer.get("notes") or "")
+
+    def confirm_ignore():
+        offer = getattr(window, "_update_offer", None) or {}
+        version = format_version(parse_version(offer.get("version")))
+        if not version:
+            return
+        data["ignored_version"] = version
+        try:
+            store.save(data)
+        except OSError:
+            alerts.deliver(Notice("设置", "忽略版本没有保存。", "warning", "confirm"))
+            return
+        window.update_choice.hide()
+        window.update_chip.set_version("")
+
+    window.update_chip.clicked.connect(show_update_choice)
+    window.update_choice.ignore_requested.connect(window.update_confirm.ask)
+    window.update_choice.update_requested.connect(lambda: begin_apply(getattr(window, "_update_offer", None)))
+    window.update_confirm.confirmed.connect(confirm_ignore)
+    update_signals.checked.connect(on_update_checked)
+    update_signals.ready.connect(on_update_ready)
+    update_signals.failed.connect(on_update_failed)
+    if not preview and data.get("auto_update"):
+        runtime["update_hold"] = True
+        runtime["update_hold_due"] = bool(runtime.get("auto_due"))
+        runtime["auto_due"] = False
+    if not preview:
+        def check_updates():
+            try:
+                local = local_version(install_root(), frozen(), T.APP_VERSION)
+                offer = fetch_offer("CampusTerminal/" + (format_version(local) or "0"))
+            except Exception as exc:
+                trace.emit("update_check_failed", error=type(exc).__name__)
+                offer = None
+            update_signals.checked.emit(offer)
+        threading.Thread(target=check_updates, daemon=True).start()
+
     timer.start()
     if not preview and runtime["auto_due"]:
         QTimer.singleShot(0, tick)

@@ -6,7 +6,7 @@ from gui import theme as T
 from gui.widgets.paint import draw_baseline, draw_glyphs, prepare
 
 
-def paint_chrome(painter, scale, family, width, height, origin):
+def paint_chrome(painter, scale, family, width, height, origin, version):
     prepare(painter)
     outer = QPainterPath()
     outer.addRoundedRect(QRectF(0, 0, width, height), T.OUTER_R * scale, T.OUTER_R * scale)
@@ -23,7 +23,7 @@ def paint_chrome(painter, scale, family, width, height, origin):
     banner.addRoundedRect(QRectF(bx * scale, by * scale, bw * scale, bh * scale), br * scale, br * scale)
     painter.fillPath(banner, T.C_CARD)
     draw_glyphs(painter, T.G_BANNER, (0, 0), scale, T.ui_font(45.675, scale, family), T.C_MUTED)
-    draw_baseline(painter, T.VERSION, scale, "V" + T.APP_VERSION, T.ui_font(41.058, scale, family), T.C_MUTED)
+    draw_baseline(painter, T.VERSION, scale, "V" + version, T.ui_font(41.058, scale, family), T.C_MUTED)
     draw_baseline(
         painter,
         T.DISCLAIMER,

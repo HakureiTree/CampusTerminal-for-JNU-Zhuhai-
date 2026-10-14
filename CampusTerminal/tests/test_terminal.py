@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +29,14 @@ from gui.shell.tray import AppTray
 from gui.shell.notifications import Notice
 
 APP = QApplication.instance() or QApplication([])
+
+
+def _backend_version():
+    text = (ROOT / "core" / "CampusTerminal.Core.csproj").read_text(encoding="utf-8")
+    match = re.search(r"<Version>(\d+\.\d+\.\d+)</Version>", text)
+    if not match:
+        raise AssertionError("Core version missing")
+    return "CampusTerminal-" + match.group(1)
 
 
 class TerminalTests(unittest.TestCase):
@@ -179,7 +188,7 @@ class TerminalTests(unittest.TestCase):
             result = client.ensure_started()
             self.assertTrue(result.get("ok"), result)
             self.assertFalse(result["active"])
-            self.assertEqual(client.ensure_started()["version"], "CampusTerminal-1.3.19")
+            self.assertEqual(client.ensure_started()["version"], _backend_version())
         finally:
             self.assertTrue(client.shutdown().get("ok"))
             deadline = time.monotonic() + 5
@@ -258,7 +267,7 @@ class TerminalTests(unittest.TestCase):
                     break
                 time.sleep(.05)
             self.assertTrue(status.get("ok"), status)
-            self.assertEqual(status["version"], "CampusTerminal-1.3.19")
+            self.assertEqual(status["version"], _backend_version())
             self.assertFalse(status["options"]["inodeFallback"])
             self.assertFalse(status["active"])
             for enabled in [False, True, False]:
