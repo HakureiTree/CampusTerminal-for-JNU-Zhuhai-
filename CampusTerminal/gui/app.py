@@ -22,7 +22,7 @@ from gui.bridge.auto_policy import (
     MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
     may_resume_owned_session, should_retry_auto_connect, silent_retry_wait, want_auto_connect)
 
-from gui.bridge import trace
+from gui.bridge import resources, trace
 from gui.shell.alerts import AlertHost
 from gui.shell.notifications import Notice, NotificationPolicy
 from gui.shell.tray import AppTray, allow_taskbar_created
@@ -147,6 +147,34 @@ def _main_impl(cleanup):
                "campaign_id": "", "campaign_eligible": False, "log_alerted": False,
                "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False}
     runtime["last_logged_status_phase"] = None
+    # The window starts hidden in silent mode; the first present is a reveal too.
+    window_hidden = {"concealed": not window.isVisible()}
+
+    def sample_resources_event(reason):
+        """Journal a resource sample; diagnostics must never disturb the GUI."""
+        try:
+            values = resources.sample_resources(window.isVisible(), tray.flashing if tray else False)
+        except Exception:
+            values = None
+        try:
+            if values is None:
+                trace.emit("gui_resources", reason="error")
+            else:
+                trace.emit("gui_resources", reason=reason, **values)
+        except Exception:
+            pass
+
+    def note_concealed():
+        window_hidden["concealed"] = True
+
+    def note_revealed():
+        if not window_hidden["concealed"]:
+            return
+        window_hidden["concealed"] = False
+        sample_resources_event("revealed")
+
+    window.concealed.connect(note_concealed)
+    window.revealed.connect(note_revealed)
 
     def apply_original_features():
         on = original_present()
@@ -756,6 +784,7 @@ def _main_impl(cleanup):
         return True
 
     attach_tray()
+    sample_resources_event("startup")
     match = selected()
     sampler.set_adapter(match["name"] if match else None)
     refresh_ipv4()
@@ -773,6 +802,10 @@ def _main_impl(cleanup):
     timer = QTimer(window)
     timer.setInterval(1000)
     timer.timeout.connect(tick)
+    resources_timer = QTimer(window)
+    resources_timer.setInterval(60 * 1000)
+    resources_timer.timeout.connect(lambda: sample_resources_event("periodic"))
+    resources_timer.start()
     watchdog = trace.MainLoopWatchdog()
     cleanup.append(watchdog.close)
     pulse = QTimer(window)
@@ -784,6 +817,7 @@ def _main_impl(cleanup):
             return
         runtime["closing"] = True
         timer.stop()
+        resources_timer.stop()
         pulse.stop()
         watchdog.close()
         # Focus loss during widget destruction must not save or open a dialog.

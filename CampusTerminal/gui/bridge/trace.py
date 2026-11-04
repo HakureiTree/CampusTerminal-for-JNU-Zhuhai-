@@ -124,6 +124,7 @@ def emit(stage, **detail):
         "auto_retry_cap_reached": {"count", "campaign_id"},
         "status_healthy_summary": {"count"},
         "status_phase": {"phase", "active"},
+        "gui_resources": {"gdi", "user", "private_mb", "visible", "tray_flashing", "reason"},
     }
     common = {"request_id", "method", "duration_ms", "timeout_ms", "outcome", "error", "error_type",
               "filename", "function", "line", "busy_ms", "count", "first_at", "last_at", "recovery_ms",
