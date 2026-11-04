@@ -1,6 +1,6 @@
 # 发行包
 
-每个版本放在独立目录，最新版本为 [1.4.1](1.4.1/README.md)，首个版本为 [1.3.18](1.3.18/README.md)。
+每个版本放在独立目录，最新版本为 [1.4.2](1.4.2/README.md)，首个版本为 [1.3.18](1.3.18/README.md)。
 
 - `CampusTerminal-<版本>-windows-x64-setup.exe`：Windows 安装版。
 - `CampusTerminal-<版本>-windows-x64-portable.zip`：完整便携目录，解压后运行。
