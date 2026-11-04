@@ -84,7 +84,7 @@ class TerminalTests(unittest.TestCase):
             self.assertGreater(window.settings.x(), window.frameGeometry().right())
             self.assertTrue(screen.availableGeometry().contains(window.settings.frameGeometry()))
             for block in [window.settings.nic, window.settings.types, window.settings.autos]:
-                self.assertTrue(window.settings.rect().contains(block.geometry()))
+                self.assertTrue(window.settings.content.rect().contains(block.geometry()))
             bounds = window.frameGeometry().united(window.settings.frameGeometry())
             ratio = window.devicePixelRatioF()
             combined = QImage(round(bounds.width() * ratio), round(bounds.height() * ratio), QImage.Format_ARGB32)

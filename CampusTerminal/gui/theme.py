@@ -284,9 +284,9 @@ def load_design_font():
     return pick_font_family()
 
 
-def ui_font(px, scale, family):
+def ui_font(px, scale, family, minimum=0):
     font = QFont(family)
-    font.setPixelSize(max(1, round(px * scale)))
+    font.setPixelSize(max(1, int(minimum), round(px * scale)))
     font.setWeight(QFont.Bold)
     font.setStyleStrategy(QFont.PreferAntialias)
     return font
