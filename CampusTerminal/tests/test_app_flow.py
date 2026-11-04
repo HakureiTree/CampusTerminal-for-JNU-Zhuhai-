@@ -137,6 +137,10 @@ class AppFlowTests(unittest.TestCase):
         result = subprocess.run([sys.executable, __file__, "--campaign"], capture_output=True, timeout=12)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
 
+    def test_slow_retry_asks_core_to_resume_owned_session(self):
+        result = subprocess.run([sys.executable, __file__, "--resume"], capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
 
 def run_address_refresh_scenario():
     from PyQt5.QtCore import QTimer
@@ -244,6 +248,99 @@ def run_campaign_scenario():
     assert __import__("threading").excepthook is original_thread
 
 
+def run_resume_scenario():
+    """A GUI restarted after the 5-failure cap still sees the core-held resume right.
+
+    The first two status polls describe the still-online session; the next ones
+    describe the capped session the core kept. The next slow retry must ask the
+    core to resume that session (silentRetry + resumeOwnedSession), without the
+    user opening the window or clicking connect.
+    """
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtWidgets import QApplication
+    from gui import app as gui
+    from gui.bridge import auto_policy
+
+    original_sys, original_thread = sys.excepthook, __import__("threading").excepthook
+    attempts = []
+    status_calls = {"n": 0}
+
+    class Backend:
+        def __init__(self, _root):
+            pass
+
+        def status(self):
+            status_calls["n"] += 1
+            online = status_calls["n"] <= 2
+            return {"ok": True, "processId": 51, "generation": 1, "active": online,
+                    "phase": "online" if online else "error",
+                    "firstError": None if online else "AutoReconnectLimit",
+                    "resumeOwnedSession": True, "resumeAdapter": "resume-adapter",
+                    "recovery": {"events": [], "enabled": True,
+                                 "autoFailures": 0 if online else 5,
+                                 "exhausted": not online}}
+
+        def connect(self, _user, _password, _adapter, options):
+            attempts.append(dict(options))
+            if options.get("silentRetry"):
+                QTimer.singleShot(120, QApplication.instance().quit)
+                return {"ok": True, "active": False, "phase": "connecting"}
+            # The startup attempt must not leave the GUI thinking it is still offline,
+            # otherwise the accelerated test clock would reconnect before status polls.
+            return {"ok": True, "active": True, "phase": "online"}
+
+        def shutdown(self, *_args):
+            return {"ok": True, "active": False, "phase": "idle"}
+
+        def configure(self, options):
+            return {"ok": True, "options": options, "phase": "idle",
+                    "resumeOwnedSession": True, "resumeAdapter": "resume-adapter"}
+
+        def disconnect(self):
+            return {"ok": True, "phase": "idle"}
+
+        def release_campus(self, _adapter):
+            return {"ok": True}
+
+    original_interval = QTimer.setInterval
+
+    def quick_interval(timer, interval):
+        return original_interval(timer, 20 if interval == 1000 else interval)
+
+    data = {**gui.store.DEFAULTS, "account": "synthetic-account", "save_account": True,
+            "save_password": True, "auto_connect": True, "auto_start": False,
+            "auto_reconnect": True}
+    nic = {"id": "resume-adapter", "name": "test", "label": "test", "up": True}
+    real_window = gui.MainWindow
+
+    def resume_window(*args):
+        window = real_window(*args)
+        QTimer.singleShot(12000, QApplication.instance().quit)
+        return window
+
+    with patch.object(gui, "BackendClient", Backend), \
+            patch.object(gui, "MainWindow", resume_window), \
+            patch.object(gui, "SingleInstance", return_value=SimpleNamespace(acquire=lambda: True)), \
+            patch.object(gui, "list_adapters", return_value=[nic]), \
+            patch.object(gui.store, "load", return_value=data), \
+            patch.object(gui.store, "load_password", return_value="synthetic-password"), \
+            patch.object(gui.store, "save"), patch.object(gui.store, "clear_password"), \
+            patch.object(gui.store, "startup_enabled", return_value=False), \
+            patch.object(gui.QSystemTrayIcon, "isSystemTrayAvailable", return_value=False), \
+            patch.object(gui, "alternative_path", return_value=False), \
+            patch.object(gui, "original_running", return_value=False), \
+            patch.object(gui, "SILENT_RETRY_SECONDS", 2), \
+            patch.object(auto_policy, "SILENT_RETRY_SECONDS", 2), \
+            patch.object(QTimer, "setInterval", quick_interval):
+        assert gui.main() == 0
+    periodic = [options for options in attempts if options.get("silentRetry")]
+    assert periodic, ("the slow retry must submit a resume request", attempts)
+    for options in periodic:
+        assert options.get("resumeOwnedSession") is True, attempts
+    assert sys.excepthook is original_sys
+    assert __import__("threading").excepthook is original_thread
+
+
 if __name__ == "__main__":
     if "--address-refresh" in sys.argv:
         run_address_refresh_scenario()
@@ -251,5 +348,7 @@ if __name__ == "__main__":
         run_scenario(sys.argv[-1])
     elif "--campaign" in sys.argv:
         run_campaign_scenario()
+    elif "--resume" in sys.argv:
+        run_resume_scenario()
     else:
         unittest.main(verbosity=2)

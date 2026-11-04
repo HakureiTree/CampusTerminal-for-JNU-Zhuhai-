@@ -20,7 +20,7 @@ from gui.bridge.local_net import ConnectionAddressRefresh, TrafficSampler, adapt
 from gui.bridge.messages import error_text
 from gui.bridge.auto_policy import (
     MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
-    should_retry_auto_connect, silent_retry_wait, want_auto_connect)
+    may_resume_owned_session, should_retry_auto_connect, silent_retry_wait, want_auto_connect)
 
 from gui.bridge import trace
 from gui.shell.alerts import AlertHost
@@ -144,7 +144,8 @@ def _main_impl(cleanup):
                "notified_fallback": bool(data.get("inode_fallback")), "inode_offered": False,
                "failure_count": 0, "yielded_network": False, "accounted": False,
                "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False,
-               "campaign_id": "", "campaign_eligible": False, "log_alerted": False}
+               "campaign_id": "", "campaign_eligible": False, "log_alerted": False,
+               "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False}
     runtime["last_logged_status_phase"] = None
 
     def apply_original_features():
@@ -206,10 +207,13 @@ def _main_impl(cleanup):
         if tray:
             tray.set_phase(phase)
 
-    def options(takeover=False, manual=False, silent_retry=False, campaign=False):
+    def options(takeover=False, manual=False, silent_retry=False, campaign=False, resume_owned=False):
         result = {"autoReconnect": bool(data.get("auto_reconnect")), "inodeFallback": bool(data.get("inode_fallback")),
                 "connectionType": "normal", "takeOverOriginal": bool(takeover), "manual": bool(manual),
-                "silentRetry": bool(silent_retry)}
+                "silentRetry": bool(silent_retry), "resumeOwnedSession": bool(resume_owned)}
+        nic = selected()
+        if nic:
+            result["adapterId"] = nic["id"]
         if campaign:
             result.update(autoReconnectCampaign=True, campaignId=ensure_campaign_id())
         return result
@@ -227,6 +231,7 @@ def _main_impl(cleanup):
                        campaign_id=runtime["campaign_id"] or None, outcome="entered", reason=reason)
 
     def completed(method, result):
+        periodic = runtime.pop("periodic_connect", False)
         if method == "shutdown" and result.get("error") in ("BackendUnavailable", "BackendStopTimeout") and not data.get("inode_fallback"):
             result = {"ok": True, "pending": False}
         if result.get("ok"):
@@ -244,6 +249,9 @@ def _main_impl(cleanup):
                 if phase_now != runtime["last_logged_status_phase"]:
                     runtime["last_logged_status_phase"] = phase_now
                     trace.emit("status_phase", phase=phase_now, active=bool(result.get("active")))
+            if "resumeOwnedSession" in result:
+                runtime["resume_owned_session"] = bool(result.get("resumeOwnedSession"))
+                runtime["resume_adapter"] = str(result.get("resumeAdapter") or "")
             if method == "status" and result.get("phase") in ("online", "fallback_active"):
                 runtime["campaign_eligible"] = False
                 runtime["campaign_id"] = ""
@@ -377,6 +385,19 @@ def _main_impl(cleanup):
             if blocking:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
+            if periodic and err:
+                # A slow retry that cannot take over must keep the ten-minute backoff
+                # instead of collapsing into the two-second fast retry loop.
+                runtime["auto_due"] = False
+                runtime["retry_stopped"] = True
+                runtime["cap_noted"] = True
+                runtime["silent_wait"] = SILENT_RETRY_SECONDS
+                trace.emit("auto_retry_wait", count=runtime["failure_count"],
+                           duration_ms=SILENT_RETRY_SECONDS * 1000,
+                           campaign_id=runtime["campaign_id"] or None, outcome="entered", reason="resume_rejected")
+                sync_phase("error", error=err, quiet=True)
+                pump()
+                return
             idle_status = method == "status" and not runtime["active"] and err == "BackendUnavailable"
             if not idle_status:
                 sync_phase("error", error=err)
@@ -457,8 +478,15 @@ def _main_impl(cleanup):
         refresh_ipv4()
         runtime["last_up"] = False
         if not preview:
+            changed = (match["id"] if match else "") != data.get("adapter_id")
             data["adapter"], data["adapter_id"] = label, match["id"] if match else ""
             store.save(data)
+            if changed:
+                # A new adapter must not inherit the previous session's resume right.
+                runtime["resume_owned_session"] = False
+                runtime["resume_adapter"] = ""
+                runtime["configure"] = True
+                pump()
 
     def saved_login():
         user = (data.get("account") or "").strip() if data.get("save_account") else ""
@@ -500,11 +528,22 @@ def _main_impl(cleanup):
             alerts.warn("网络登入", "凭据设置保存失败，尚未发起连接。")
             return False
         takeover = original_running() and not periodic
+        resume_owned = False
+        if periodic:
+            try:
+                local_other = bool(alternative_path(nic["id"]))
+            except OSError:
+                local_other = False
+            resume_owned = may_resume_owned_session(
+                periodic, runtime["resume_owned_session"], runtime["resume_adapter"], nic["id"],
+                data.get("auto_connect"), data.get("auto_reconnect"), local_other)
         trace.emit("connect_submit", silent=silent, adapter=nic["id"], takeover=takeover,
-                   up=bool(nic.get("up")))
+                   up=bool(nic.get("up")), resume=resume_owned)
         campaign = bool(silent and runtime["campaign_eligible"])
-        backend.submit("connect", user, password, nic["id"],
-                       options(takeover=takeover, manual=not silent, silent_retry=periodic, campaign=campaign))
+        if backend.submit("connect", user, password, nic["id"],
+                          options(takeover=takeover, manual=not silent, silent_retry=periodic,
+                                  campaign=campaign, resume_owned=resume_owned)):
+            runtime["periodic_connect"] = bool(periodic)
         runtime["accounted"] = False
         if not silent:
             runtime["campaign_eligible"] = False

@@ -110,7 +110,7 @@ def emit(stage, **detail):
     global _sequence, _failed, _last_successful_status, _healthy_status_count
     schemas = {
         "path_census": {"other", "rows"},
-        "connect_submit": {"silent", "adapter", "takeover", "up"},
+        "connect_submit": {"silent", "adapter", "takeover", "up", "resume"},
         "auto_armed": {"adapter", "has_password", "auto_due", "adapter_up"},
         "request_started": {"request_id", "method"},
         "request_completed": {"request_id", "method", "duration_ms", "timeout_ms", "outcome", "error"},

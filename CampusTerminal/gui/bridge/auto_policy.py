@@ -80,6 +80,15 @@ def silent_retry_wait(remaining, capped, other_network, enabled, manual_stop, ha
     return True, SILENT_RETRY_SECONDS
 
 
+def may_resume_owned_session(periodic, owned, owned_adapter, adapter, auto_connect, auto_reconnect, other_network):
+    """Only a slow retry on the same adapter may ask the core to resume its session.
+
+    The core re-checks the same ownership immediately before it touches iNode.
+    """
+    return bool(periodic and owned and owned_adapter and owned_adapter == adapter
+                and auto_connect and auto_reconnect and not other_network)
+
+
 def apply_connect_outcome(error, phase, failure_count, yielded, other_network):
     """Pure campaign accounting after a status/connect result.
 

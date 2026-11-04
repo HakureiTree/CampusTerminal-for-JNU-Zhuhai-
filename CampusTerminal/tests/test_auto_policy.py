@@ -6,7 +6,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gui.bridge.auto_policy import (
     MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due, counts_as_auto_failure,
-    should_retry_auto_connect, should_stop_auto_connect, silent_retry_wait, want_auto_connect)
+    may_resume_owned_session, should_retry_auto_connect, should_stop_auto_connect, silent_retry_wait,
+    want_auto_connect)
 
 
 class AutoPolicyTests(unittest.TestCase):
@@ -87,6 +88,16 @@ class AutoPolicyTests(unittest.TestCase):
         self.assertEqual(left, 30)
         due, left = silent_retry_wait(1, True, False, True, True, False)
         self.assertFalse(due)
+
+    def test_only_a_slow_retry_on_the_owned_adapter_may_resume(self):
+        self.assertTrue(may_resume_owned_session(True, True, "a", "a", True, True, False))
+        self.assertFalse(may_resume_owned_session(False, True, "a", "a", True, True, False))
+        self.assertFalse(may_resume_owned_session(True, False, "a", "a", True, True, False))
+        self.assertFalse(may_resume_owned_session(True, True, "a", "b", True, True, False))
+        self.assertFalse(may_resume_owned_session(True, True, "", "a", True, True, False))
+        self.assertFalse(may_resume_owned_session(True, True, "a", "a", False, True, False))
+        self.assertFalse(may_resume_owned_session(True, True, "a", "a", True, False, False))
+        self.assertFalse(may_resume_owned_session(True, True, "a", "a", True, True, True))
 
     def test_auto_connect_does_not_wait_for_windows_link_up(self):
         self.assertTrue(want_auto_connect(True, False, False, True, True))
