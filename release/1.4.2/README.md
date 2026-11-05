@@ -16,6 +16,7 @@
 - 托盘图标缓存 idle/wait/ok/err 四个 QIcon，状态未变化时不再重复 `setIcon`；闪烁复用缓存，Explorer 重建托盘时强制刷新一次。
 - GUI 每分钟记录一次资源采样：GDI 对象数、USER 对象数、私有内存、窗口是否可见、托盘是否闪烁；窗口从隐藏恢复时补一条，用于定位 `CreateDIBSection failed` 的资源走势。
 - 慢速重试每次记录恢复决策（是否持有恢复资格、网卡是否一致、自动连接/自动重连、替代网络、失败数和阻断原因）；核心记录接管接受、拒绝或取消的具体原因，便于日志定位。
+- 感谢 [@LLLfish](https://github.com/LLLfish) 通过 [PR #2](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/pull/2) 贡献更新与日志入口、慢速重连恢复、网卡身份与失败计数修复，以及托盘和设置页改进。
 
 ## 修复
 
