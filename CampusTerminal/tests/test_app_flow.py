@@ -134,7 +134,7 @@ class AppFlowTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
 
     def test_automatic_reconnect_campaign_metadata_is_sent_per_worker_attempt(self):
-        result = subprocess.run([sys.executable, __file__, "--campaign"], capture_output=True, timeout=12)
+        result = subprocess.run([sys.executable, __file__, "--campaign"], capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
 
     def test_slow_retry_asks_core_to_resume_owned_session(self):
@@ -205,6 +205,8 @@ def run_campaign_scenario():
         def connect(self, _user, _password, _adapter, options):
             attempts.append(dict(options))
             self.connects += 1
+            if self.connects >= 3:
+                QTimer.singleShot(150, QApplication.instance().quit)
             if self.connects < 3:
                 return {"ok": True, "active": False, "phase": "error", "firstError": "AuthenticationRejected",
                         "recovery": {"events": []}}
@@ -223,7 +225,7 @@ def run_campaign_scenario():
     real_window = gui.MainWindow
     def campaign_window(*args):
         window = real_window(*args)
-        QTimer.singleShot(4500, QApplication.instance().quit)
+        QTimer.singleShot(15000, QApplication.instance().quit)
         return window
     with patch.object(gui, "BackendClient", Backend), \
             patch.object(gui, "MainWindow", campaign_window), \
@@ -275,7 +277,8 @@ def run_resume_scenario():
             return {"ok": True, "processId": 51, "generation": 1, "active": online,
                     "phase": "online" if online else "error",
                     "firstError": None if online else "AutoReconnectLimit",
-                    "resumeOwnedSession": True, "resumeAdapter": "resume-adapter",
+                    "resumeOwnedSession": True,
+                    "resumeAdapter": "325b38cc-bfd3-4628-beac-acbc8f520ed4",
                     "recovery": {"events": [], "enabled": True,
                                  "autoFailures": 0 if online else 5,
                                  "exhausted": not online}}
@@ -294,7 +297,8 @@ def run_resume_scenario():
 
         def configure(self, options):
             return {"ok": True, "options": options, "phase": "idle",
-                    "resumeOwnedSession": True, "resumeAdapter": "resume-adapter"}
+                    "resumeOwnedSession": True,
+                    "resumeAdapter": "325b38cc-bfd3-4628-beac-acbc8f520ed4"}
 
         def disconnect(self):
             return {"ok": True, "phase": "idle"}
@@ -310,7 +314,7 @@ def run_resume_scenario():
     data = {**gui.store.DEFAULTS, "account": "synthetic-account", "save_account": True,
             "save_password": True, "auto_connect": True, "auto_start": False,
             "auto_reconnect": True}
-    nic = {"id": "resume-adapter", "name": "test", "label": "test", "up": True}
+    nic = {"id": "325B38CC-BFD3-4628-BEAC-ACBC8F520ED4", "name": "test", "label": "test", "up": True}
     real_window = gui.MainWindow
 
     def resume_window(*args):

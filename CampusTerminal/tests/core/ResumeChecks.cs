@@ -52,6 +52,7 @@ internal static class ResumeChecks
         var note = typeof(GuiHost).GetMethod("Note", Flags)!;
         var clear = typeof(GuiHost).GetMethod("ClearOwnedSession", Flags)!;
         var heldFor = typeof(GuiHost).GetMethod("ResumeRightHeldFor", Flags)!;
+        var rightState = typeof(GuiHost).GetMethod("ResumeRightState", Flags)!;
         var configure = typeof(GuiHost).GetMethod("Configure", Flags)!;
         var previous = (Owned: owned.GetValue(null), Adapter: ownedAdapter.GetValue(null),
             Auto: auto.GetValue(null), Campus: campus.GetValue(null), Phase: phase.GetValue(null));
@@ -73,6 +74,27 @@ internal static class ResumeChecks
             phase.SetValue(null, "error");
             check((bool)heldFor.Invoke(null, [adapterA])!,
                 "The core reports a held right after the capped session failed");
+            owned.SetValue(null, false);
+            check((string)rightState.Invoke(null, [adapterA])! == "NoOwnedSession",
+                "A missing right reports NoOwnedSession");
+            owned.SetValue(null, true);
+            ownedAdapter.SetValue(null, Guid.Empty);
+            check((string)rightState.Invoke(null, [adapterA])! == "NoOwnedAdapter",
+                "A right without an adapter reports NoOwnedAdapter");
+            ownedAdapter.SetValue(null, adapterB);
+            check((string)rightState.Invoke(null, [adapterA])! == "AdapterMismatch",
+                "A different adapter reports AdapterMismatch");
+            ownedAdapter.SetValue(null, adapterA);
+            auto.SetValue(null, false);
+            check((string)rightState.Invoke(null, [adapterA])! == "AutoReconnectDisabled",
+                "Disabled auto-reconnect reports AutoReconnectDisabled");
+            auto.SetValue(null, true);
+            phase.SetValue(null, "fallback");
+            check((string)rightState.Invoke(null, [adapterA])! == "Phase:fallback",
+                "A handback phase reports its own reason");
+            phase.SetValue(null, "error");
+            check((string)rightState.Invoke(null, [adapterA])! == "Held",
+                "A healthy right reports Held");
             configure.Invoke(null, [1, new JsonObject
             {
                 ["options"] = new JsonObject { ["adapterId"] = adapterB.ToString(), ["autoReconnect"] = true }

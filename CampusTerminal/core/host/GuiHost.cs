@@ -226,12 +226,22 @@ internal static class GuiHost
     internal static bool ResumeRightLostAfterSubmit(bool rightHeld, bool cancelled, bool alternativePath) =>
         cancelled || !rightHeld || alternativePath;
 
-    private static bool ResumeRightHeldFor(Guid adapter)
+    private static string ResumeRightState(Guid adapter)
     {
         lock (Gate)
-            return ResumeRightHeld(resumeOwnedSession, resumeOwnedAdapter, adapter, autoReconnect, handoffRunning)
-                && phase is not ("fallback" or "fallback_active" or "fallback_failed" or "disconnecting");
+        {
+            if (!resumeOwnedSession) return "NoOwnedSession";
+            if (resumeOwnedAdapter == Guid.Empty) return "NoOwnedAdapter";
+            if (resumeOwnedAdapter != adapter) return "AdapterMismatch";
+            if (!autoReconnect) return "AutoReconnectDisabled";
+            if (handoffRunning) return "HandoffRunning";
+            if (phase is "fallback" or "fallback_active" or "fallback_failed" or "disconnecting")
+                return "Phase:" + phase;
+            return "Held";
+        }
     }
+
+    private static bool ResumeRightHeldFor(Guid adapter) => ResumeRightState(adapter) == "Held";
 
     private static void ClearOwnedSession(string reason)
     {
@@ -412,12 +422,24 @@ internal static class GuiHost
         // The resume right belongs to the core. A periodic retry may ask to resume it,
         // but the GUI cannot know whether the official suite also owns the port; the
         // core decides with the same detection it uses for a manual takeover.
-        if (ResumeNeedsTakeover(allowResume, ResumeRightHeldFor(adapter.Id),
-                LiveGate.OriginalSuiteRunning() || LiveGate.OriginalGuiRunning()))
+        if (allowResume)
         {
-            takeOver = true;
-            resumeTakeover = true;
-            journal?.Write("ResumeTakeoverAccepted", new { adapter = adapter.Id });
+            bool rightHeld = ResumeRightHeldFor(adapter.Id);
+            bool originalRunning = LiveGate.OriginalSuiteRunning() || LiveGate.OriginalGuiRunning();
+            if (ResumeNeedsTakeover(allowResume, rightHeld, originalRunning))
+            {
+                takeOver = true;
+                resumeTakeover = true;
+                journal?.Write("ResumeTakeoverAccepted", new { adapter = adapter.Id, reason = "Held" });
+            }
+            else
+            {
+                journal?.Write("ResumeTakeoverRejected", new
+                {
+                    adapter = adapter.Id,
+                    reason = rightHeld ? "NoOriginalClient" : ResumeRightState(adapter.Id)
+                });
+            }
         }
         if (!takeOver && (LiveGate.OriginalSuiteRunning() || LiveGate.OriginalGuiRunning()))
             return new { ok = false, id, error = "OriginalClientRunning" };
@@ -574,13 +596,26 @@ internal static class GuiHost
                 // The request was submitted a moment ago. If the user disconnected,
                 // changed the adapter, or an alternative network came up, do not
                 // touch the official client.
-                bool rightHeld = ResumeRightHeldFor(adapter.Id);
-                bool alternative = Adapters.AlternativePath(adapter.Id) || Adapters.PhonePath(adapter.Id);
-                if (ResumeRightLostAfterSubmit(rightHeld, owned.IsCancellationRequested, alternative))
+                if (owned.IsCancellationRequested)
                 {
-                    var reason = alternative ? "AlternativeNetworkPath" : "OriginalClientRunning";
-                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason });
-                    throw new InvalidOperationException(reason);
+                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = "Cancelled" });
+                    throw new OperationCanceledException(owned.Token);
+                }
+                var rightState = ResumeRightState(adapter.Id);
+                bool alternative = Adapters.AlternativePath(adapter.Id) || Adapters.PhonePath(adapter.Id);
+                if (rightState != "Held" || alternative)
+                {
+                    if (alternative)
+                    {
+                        journal?.Write("ResumeTakeoverCancelled", new
+                        {
+                            adapter = adapter.Id,
+                            reason = "AlternativeNetworkPath"
+                        });
+                        throw new InvalidOperationException("AlternativeNetworkPath");
+                    }
+                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = rightState });
+                    throw new InvalidOperationException("OriginalClientRunning");
                 }
             }
             if (takeOver)

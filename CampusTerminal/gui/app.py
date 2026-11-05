@@ -19,8 +19,9 @@ from gui.bridge.worker import BackendWorker
 from gui.bridge.local_net import ConnectionAddressRefresh, TrafficSampler, adapter_ipv4, alternative_path, list_adapters, path_census
 from gui.bridge.messages import error_text
 from gui.bridge.auto_policy import (
-    MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
-    may_resume_owned_session, should_retry_auto_connect, silent_retry_wait, want_auto_connect)
+    MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, adapter_identity_changed, adapter_key,
+    apply_connect_outcome, connection_due, resume_block_reason, same_adapter,
+    should_retry_auto_connect, silent_retry_wait, want_auto_connect)
 
 from gui.bridge import resources, trace
 from gui.shell.alerts import AlertHost
@@ -35,7 +36,7 @@ from gui.shell.instance import SingleInstance, claim_primary, ping
 
 
 def _choose_adapter(adapters, data):
-    chosen = next((a for a in adapters if a["id"] == data.get("adapter_id")), None)
+    chosen = next((a for a in adapters if same_adapter(a["id"], data.get("adapter_id"))), None)
     if not chosen:
         chosen = next((a for a in adapters if a["label"] == data.get("adapter")), None)
     if not chosen and adapters:
@@ -145,7 +146,8 @@ def _main_impl(cleanup):
                "failure_count": 0, "yielded_network": False, "accounted": False,
                "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False,
                "campaign_id": "", "campaign_eligible": False, "log_alerted": False,
-               "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False}
+               "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False,
+               "resume_rejections": 0}
     runtime["last_logged_status_phase"] = None
     # The window starts hidden in silent mode; the first present is a reveal too.
     window_hidden = {"concealed": not window.isVisible()}
@@ -279,7 +281,7 @@ def _main_impl(cleanup):
                     trace.emit("status_phase", phase=phase_now, active=bool(result.get("active")))
             if "resumeOwnedSession" in result:
                 runtime["resume_owned_session"] = bool(result.get("resumeOwnedSession"))
-                runtime["resume_adapter"] = str(result.get("resumeAdapter") or "")
+                runtime["resume_adapter"] = adapter_key(result.get("resumeAdapter")) or ""
             if method == "status" and result.get("phase") in ("online", "fallback_active"):
                 runtime["campaign_eligible"] = False
                 runtime["campaign_id"] = ""
@@ -299,10 +301,19 @@ def _main_impl(cleanup):
                     notifications.fallback_option(confirmed)
                     runtime["notified_fallback"] = confirmed
             runtime["active"] = bool(result.get("active", method == "connect"))
+            previous_failures = runtime["failure_count"]
+            if result.get("ok") and method in ("connect", "ensure_started"):
+                # Only a request the core accepted opens a new failure-accounting
+                # episode. A pre-auth rejection must not re-count the old error.
+                runtime["accounted"] = False
             rec = result.get("recovery") or {}
-            remote_failures = int(rec.get("autoFailures") or 0)
-            if remote_failures:
-                runtime["failure_count"] = max(runtime["failure_count"], remote_failures)
+            remote_raw = rec.get("autoFailures")
+            authoritative = (isinstance(remote_raw, int) and not isinstance(remote_raw, bool)
+                             and remote_raw >= 0)
+            if authoritative:
+                # The core owns the authentication failure budget; adopt it exactly
+                # instead of merging and then adding a second local increment.
+                runtime["failure_count"] = remote_raw
             if rec.get("exhausted") and runtime["failure_count"] >= MAX_AUTO_FAILURES:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
@@ -335,13 +346,17 @@ def _main_impl(cleanup):
                     runtime["silent_wait"] = SILENT_RETRY_SECONDS
                     runtime["released_for_other"] = False
                 count, stopped, yielded, notice, suppress = apply_connect_outcome(
-                    err, phase, runtime["failure_count"], runtime["yielded_network"], yield_now)
+                    err, phase, runtime["failure_count"], runtime["yielded_network"], yield_now,
+                    counted=not authoritative)
                 runtime["failure_count"], runtime["retry_stopped"], runtime["yielded_network"] = count, stopped, yielded
                 if phase == "error" or notice == "AlternativeNetworkPath":
                     runtime["accounted"] = True
                     runtime["campaign_eligible"] = True
                 if stopped:
                     runtime["auto_due"] = False
+            if (phase in ("online", "degraded") and not yield_now and previous_failures
+                    and runtime["failure_count"] == 0):
+                trace.emit("auto_retry_cleared", count=0)
             rows = []
             for e in rec.get("events", []):
                 event_result = str(e.get("result") or "")
@@ -420,6 +435,9 @@ def _main_impl(cleanup):
                 runtime["retry_stopped"] = True
                 runtime["cap_noted"] = True
                 runtime["silent_wait"] = SILENT_RETRY_SECONDS
+                runtime["resume_rejections"] = runtime.get("resume_rejections", 0) + 1
+                trace.emit("resume_rejected", error=err, count=runtime["resume_rejections"],
+                           failures=runtime["failure_count"])
                 trace.emit("auto_retry_wait", count=runtime["failure_count"],
                            duration_ms=SILENT_RETRY_SECONDS * 1000,
                            campaign_id=runtime["campaign_id"] or None, outcome="entered", reason="resume_rejected")
@@ -506,8 +524,9 @@ def _main_impl(cleanup):
         refresh_ipv4()
         runtime["last_up"] = False
         if not preview:
-            changed = (match["id"] if match else "") != data.get("adapter_id")
-            data["adapter"], data["adapter_id"] = label, match["id"] if match else ""
+            current = match["id"] if match else ""
+            changed = adapter_identity_changed(data.get("adapter_id"), current)
+            data["adapter"], data["adapter_id"] = label, current
             store.save(data)
             if changed:
                 # A new adapter must not inherit the previous session's resume right.
@@ -562,9 +581,17 @@ def _main_impl(cleanup):
                 local_other = bool(alternative_path(nic["id"]))
             except OSError:
                 local_other = False
-            resume_owned = may_resume_owned_session(
-                periodic, runtime["resume_owned_session"], runtime["resume_adapter"], nic["id"],
+            resume_reason = resume_block_reason(
+                runtime["resume_owned_session"], runtime["resume_adapter"], nic["id"],
                 data.get("auto_connect"), data.get("auto_reconnect"), local_other)
+            resume_owned = resume_reason == "ok"
+            trace.emit("resume_decision", adapter=nic["id"],
+                       owned=bool(runtime["resume_owned_session"]),
+                       same_adapter=same_adapter(runtime["resume_adapter"], nic["id"]),
+                       auto_connect=bool(data.get("auto_connect")),
+                       auto_reconnect=bool(data.get("auto_reconnect")),
+                       other_network=local_other, failures=runtime["failure_count"],
+                       resume=resume_owned, reason=resume_reason)
         trace.emit("connect_submit", silent=silent, adapter=nic["id"], takeover=takeover,
                    up=bool(nic.get("up")), resume=resume_owned)
         campaign = bool(silent and runtime["campaign_eligible"])
@@ -572,7 +599,6 @@ def _main_impl(cleanup):
                           options(takeover=takeover, manual=not silent, silent_retry=periodic,
                                   campaign=campaign, resume_owned=resume_owned)):
             runtime["periodic_connect"] = bool(periodic)
-        runtime["accounted"] = False
         if not silent:
             runtime["campaign_eligible"] = False
             runtime["campaign_id"] = ""
