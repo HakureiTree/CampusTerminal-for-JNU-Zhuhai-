@@ -7,7 +7,7 @@
 <p>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="许可证：GPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-GPL--3.0-2563EB?style=flat&logo=gnu&logoColor=white" /></a>
   <img alt="平台：Windows 10 / 11" src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011-0078D4?style=flat&logo=windows&logoColor=white" />
-  <img alt="版本：1.4.1" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.4.1-3F6212?style=flat" />
+  <img alt="版本：1.4.2" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.4.2-3F6212?style=flat" />
 </p>
 
 <p>
@@ -113,6 +113,8 @@
 设置中的「学校官方客户端自动重连兜底」默认关闭。启用后，在本终端恢复失败或退出程序时，将连接交还官方客户端。手动断开时保持断开状态。交还过程沿用官方客户端现有的进程、服务和网络配置。
 
 启用这项功能前，请通过学校提供的渠道获取官方客户端，并完成安装和配置。
+
+从 1.4.2 起，终端根据 Windows 注册的 `INODE_SVR_SERVICE` 服务识别官方 iNode 的安装目录，兼容不同目录及程序文件版本，不再要求固定的路径或开发机文件哈希。服务停启前后仍会核对本次接管记录的服务身份、启动类型和文件指纹；配置或程序中途变化时停止操作。官方客户端的识别、恢复启动及日志读取使用同一安装目录，缺少启动快捷方式时直接启动已核验的客户端程序。
 
 普通认证直接运行发行包即可。原客户端交还中的 OCR 分支需要另行安装 Python 和 `requirements-ocr.txt` 中的依赖；可用 `CAMPUS_TERMINAL_OCR_PYTHON` 指定解释器，默认使用 PATH 中的 `python.exe`。
 

@@ -1,4 +1,4 @@
-﻿# Isolated executor-test platform. No service, network or task commands are called.
+# Isolated executor-test platform. No service, network or task commands are called.
 Set-StrictMode -Version Latest
 $script:Root=Split-Path $PSScriptRoot -Parent
 function Read-Fixture { Get-Content (Join-Path $script:Root 'fixture.json') -Raw | ConvertFrom-Json }
@@ -12,7 +12,11 @@ function Get-NetIPAddress {
     [pscustomobject]@{IPAddress='198.51.100.1';AddressState='Preferred'}
 }
 function Get-INodeLaunchShortcut { return 'verified-fixture-shortcut' }
-function Get-CampusOriginalService { [pscustomobject]@{Name='INODE_SVR_SERVICE';State='Stopped';StartMode='Auto';Path='fixture'} }
+function Get-CampusOriginalService {
+    $f=Read-Fixture
+    $hash=if($f.PSObject.Properties['ServiceHash']){$f.ServiceHash}else{'fixture-sha256'}
+    [pscustomobject]@{Name='INODE_SVR_SERVICE';State='Stopped';StartMode='Auto';Path='"C:\fixture\iNodeMon.exe" -startService';BinarySha256=$hash}
+}
 function Set-CampusOriginalServiceState {
     param($Original,$State)
     Write-Action 'service'
