@@ -25,6 +25,7 @@ def run_case(case):
     offer = {"version": "9.9.9", "notes": "- fixture update", "assets": []}
     data = {**gui.store.DEFAULTS, "account": "fixture-user", "save_password": True,
             "auto_connect": True, "auto_start": False, "auto_update": case != "manual",
+            "auto_check_update": case == "manual",
             "ignored_version": "9.9.9" if case == "ignored" else ""}
     nic = {"id": "fixture-nic", "name": "fixture", "label": "fixture", "up": True}
 

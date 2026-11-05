@@ -211,6 +211,7 @@ using (var monitor = new RecoveryMonitor(new Sampler(), new Probe(), "192.0.2.1"
 HandoffChecks.Run(Check);
 ObserverLeaseChecks.Run(Check);
 RetryChecks.Run(Check);
+ResumeChecks.Run(Check);
 AcceptanceChecks.Run(Check);
 HandoffBudgetChecks.Run(Check);
 AcceptanceRecoveryChecks.Run(Check);

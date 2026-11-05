@@ -36,6 +36,10 @@ internal static class GuiHost
     private static int countedSerial = -1;
     private static RuntimeDiagnostics? diagnostics;
     private static int heartbeatRunning;
+    // Ownership of the previous session survives the GUI process. It is set only after
+    // connectivity is verified and cleared by a user-visible handback action.
+    private static bool resumeOwnedSession;
+    private static Guid resumeOwnedAdapter;
 
     public static int Run()
     {
@@ -196,7 +200,8 @@ internal static class GuiHost
                 executable = Environment.ProcessPath,
                 phase, error, firstError, acceptanceActive, heartbeatCount,
                 elevated = LiveGate.Elevated(), active = session != null, generation,
-                options = new { autoReconnect, inodeFallback }, handoff = new { attempted = handoffAttempted, running = handoffRunning, report = handoffReport },
+                options = new { autoReconnect, inodeFallback }, resumeOwnedSession, resumeAdapter = resumeOwnedAdapter.ToString(),
+                handoff = new { attempted = handoffAttempted, running = handoffRunning, report = handoffReport },
                 logging = new { directory = journal?.DirectoryPath, error = journal?.Error, eventError = journal?.EventError,
                     heartbeatError = journal?.HeartbeatError, recoveryError = RecoveryLog.Error },
                 capabilities = new { normal = true, fast = false, sso = false, featureSpoofing = false },
@@ -212,16 +217,62 @@ internal static class GuiHost
             generation, heartbeatCount, loggingError = journal?.Error };
     }
 
+    internal static bool ResumeRightHeld(bool owned, Guid ownedAdapter, Guid requestedAdapter, bool reconnectEnabled, bool handingOff) =>
+        owned && ownedAdapter != Guid.Empty && ownedAdapter == requestedAdapter && reconnectEnabled && !handingOff;
+
+    internal static bool ResumeNeedsTakeover(bool allowResume, bool rightHeld, bool originalRunning) =>
+        allowResume && rightHeld && originalRunning;
+
+    internal static bool ResumeRightLostAfterSubmit(bool rightHeld, bool cancelled, bool alternativePath) =>
+        cancelled || !rightHeld || alternativePath;
+
+    private static string ResumeRightState(Guid adapter)
+    {
+        lock (Gate)
+        {
+            if (!resumeOwnedSession) return "NoOwnedSession";
+            if (resumeOwnedAdapter == Guid.Empty) return "NoOwnedAdapter";
+            if (resumeOwnedAdapter != adapter) return "AdapterMismatch";
+            if (!autoReconnect) return "AutoReconnectDisabled";
+            if (handoffRunning) return "HandoffRunning";
+            if (phase is "fallback" or "fallback_active" or "fallback_failed" or "disconnecting")
+                return "Phase:" + phase;
+            return "Held";
+        }
+    }
+
+    private static bool ResumeRightHeldFor(Guid adapter) => ResumeRightState(adapter) == "Held";
+
+    private static void ClearOwnedSession(string reason)
+    {
+        lock (Gate)
+        {
+            bool had = resumeOwnedSession || resumeOwnedAdapter != Guid.Empty;
+            resumeOwnedSession = false;
+            resumeOwnedAdapter = Guid.Empty;
+            if (had) journal?.Write("OwnedSessionCleared", new { reason });
+        }
+    }
+
     private static object Configure(int id, JsonObject request)
     {
         if (request["options"] is not JsonObject options) return new { ok = false, id, error = "InvalidOptions" };
+        Guid? requestedAdapter = Guid.TryParse(options["adapterId"]?.GetValue<string>() ?? "", out var adapterId)
+            ? adapterId : null;
+        string? clearReason = null;
         lock (Gate)
         {
             if (acceptanceActive) return new { ok = false, id, error = "AcceptanceOptionsLocked" };
             autoReconnect = options["autoReconnect"]?.GetValue<bool>() ?? autoReconnect;
             inodeFallback = options["inodeFallback"]?.GetValue<bool>() ?? inodeFallback;
+            // Switching the adapter or turning off automatic reconnect hands the resume
+            // right back to the user; never resume on the next adapter.
+            if (!autoReconnect && resumeOwnedSession) clearReason = "AutoReconnectDisabled";
+            else if (requestedAdapter is Guid changed && resumeOwnedAdapter != Guid.Empty && changed != resumeOwnedAdapter)
+                clearReason = "AdapterChanged";
             journal?.Write("OptionsChanged", new { autoReconnect, inodeFallback });
         }
+        if (clearReason != null) ClearOwnedSession(clearReason);
         return Status(id);
     }
 
@@ -273,6 +324,7 @@ internal static class GuiHost
             if (phase == "fallback_active") return new { ok = false, id, error = "OriginalOwnsNetwork" };
             stopIntent = HandoffTrigger.ManualDisconnect;
         }
+        ClearOwnedSession("ManualDisconnect");
         if (!StopSession()) { journal?.Write("SessionStopTimeout", new { id, method = "disconnect" }); return new { ok = false, id, error = "SessionStopTimeout" }; }
         RecoveryLog.EndCampaign();
         lock (Gate) { phase = "idle"; error = null; }
@@ -336,6 +388,10 @@ internal static class GuiHost
         if (adapter == null) return new { ok = false, id, error = "AdapterNotFound" };
         if (!LiveGate.Elevated()) return new { ok = false, id, error = "ElevationRequired" };
         if (journal?.Error != null) return new { ok = false, id, error = journal.Error };
+        bool adapterChanged;
+        lock (Gate)
+            adapterChanged = resumeOwnedSession && resumeOwnedAdapter != Guid.Empty && resumeOwnedAdapter != adapter.Id;
+        if (adapterChanged) ClearOwnedSession("AdapterChanged");
         bool takeOver = options?["takeOverOriginal"]?.GetValue<bool>() == true;
         bool manual = options?["manual"]?.GetValue<bool>() == true;
         // Only the new GUI marks automatic retries as manual=false. Older builds omit the
@@ -344,6 +400,8 @@ internal static class GuiHost
         bool silentRetry = options?["silentRetry"]?.GetValue<bool>() == true;
         bool reconnectCampaign = options?["autoReconnectCampaign"]?.GetValue<bool>() == true;
         string? campaignId = reconnectCampaign ? options?["campaignId"]?.GetValue<string>() : null;
+        bool allowResume = options?["resumeOwnedSession"]?.GetValue<bool>() == true;
+        bool resumeTakeover = false;
         LocalCredentials? credentialsToRun = null;
         CancellationTokenSource? sessionToRun = null;
         if (acceptance == null && automatic && AutoFailureBudget.Blocked && !silentRetry)
@@ -360,6 +418,28 @@ internal static class GuiHost
             journal?.Write("YieldedToOtherNetwork", new { adapter = adapter.Id, automatic = true });
             NotePaths(true);
             return new { ok = false, id, error = "AlternativeNetworkPath", alternative = true };
+        }
+        // The resume right belongs to the core. A periodic retry may ask to resume it,
+        // but the GUI cannot know whether the official suite also owns the port; the
+        // core decides with the same detection it uses for a manual takeover.
+        if (allowResume)
+        {
+            bool rightHeld = ResumeRightHeldFor(adapter.Id);
+            bool originalRunning = LiveGate.OriginalSuiteRunning() || LiveGate.OriginalGuiRunning();
+            if (ResumeNeedsTakeover(allowResume, rightHeld, originalRunning))
+            {
+                takeOver = true;
+                resumeTakeover = true;
+                journal?.Write("ResumeTakeoverAccepted", new { adapter = adapter.Id, reason = "Held" });
+            }
+            else
+            {
+                journal?.Write("ResumeTakeoverRejected", new
+                {
+                    adapter = adapter.Id,
+                    reason = rightHeld ? "NoOriginalClient" : ResumeRightState(adapter.Id)
+                });
+            }
         }
         if (!takeOver && (LiveGate.OriginalSuiteRunning() || LiveGate.OriginalGuiRunning()))
             return new { ok = false, id, error = "OriginalClientRunning" };
@@ -402,7 +482,7 @@ internal static class GuiHost
             lock (Gate)
             {
                 if (ReferenceEquals(session, launchSession))
-                    sessionTask = Task.Run(() => RunSession(adapter, launchCredentials, launchSession, takeOver, acceptance));
+                    sessionTask = Task.Run(() => RunSession(adapter, launchCredentials, launchSession, takeOver, acceptance, resumeTakeover));
             }
         }
         return new { ok = true, id, phase = "connecting" };
@@ -452,6 +532,11 @@ internal static class GuiHost
                 attemptsExhausted = false;
                 firstError = null;
                 phase = "online"; error = null;
+                if (campusAdapter != Guid.Empty)
+                {
+                    resumeOwnedSession = true;
+                    resumeOwnedAdapter = campusAdapter;
+                }
             }
             if (stage is "CampusPartlyReachable" or "CampusDnsFailure" or "ProbeIndeterminate" or "TwoCampusRoundsUnavailable")
             { phase = "degraded"; error = stage; }
@@ -477,7 +562,7 @@ internal static class GuiHost
     }
 
     private static void RunSession(AdapterInfo adapter, LocalCredentials creds, CancellationTokenSource owned, bool takeOver,
-        AcceptanceRequest? acceptance = null)
+        AcceptanceRequest? acceptance = null, bool resumeTakeover = false)
     {
         bool acquired = false;
         bool sessionStarted = false;
@@ -506,6 +591,33 @@ internal static class GuiHost
             var root = FindDataRoot();
             lease = new ObserverLease(Path.Combine(FindRepositoryRoot(root), "logs"));
             lease.WaitForPause(owned.Token);
+            if (takeOver && resumeTakeover)
+            {
+                // The request was submitted a moment ago. If the user disconnected,
+                // changed the adapter, or an alternative network came up, do not
+                // touch the official client.
+                if (owned.IsCancellationRequested)
+                {
+                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = "Cancelled" });
+                    throw new OperationCanceledException(owned.Token);
+                }
+                var rightState = ResumeRightState(adapter.Id);
+                bool alternative = Adapters.AlternativePath(adapter.Id) || Adapters.PhonePath(adapter.Id);
+                if (rightState != "Held" || alternative)
+                {
+                    if (alternative)
+                    {
+                        journal?.Write("ResumeTakeoverCancelled", new
+                        {
+                            adapter = adapter.Id,
+                            reason = "AlternativeNetworkPath"
+                        });
+                        throw new InvalidOperationException("AlternativeNetworkPath");
+                    }
+                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = rightState });
+                    throw new InvalidOperationException("OriginalClientRunning");
+                }
+            }
             if (takeOver)
             {
                 var original = new WindowsOriginalHandoff(FindRepositoryRoot(root), adapter, lease,
@@ -660,6 +772,7 @@ internal static class GuiHost
         Func<TimeSpan>? remaining = null, AcceptanceRequest? acceptance = null)
     {
         lock (Gate) { handoffRunning = true; handoffAttempted = true; phase = "fallback"; error = null; }
+        ClearOwnedSession("HandoffToOriginal");
         lease.Preserve = true;
         try
         {

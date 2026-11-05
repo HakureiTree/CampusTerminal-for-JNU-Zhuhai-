@@ -7,7 +7,7 @@
 <p>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="许可证：GPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-GPL--3.0-2563EB?style=flat&logo=gnu&logoColor=white" /></a>
   <img alt="平台：Windows 10 / 11" src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011-0078D4?style=flat&logo=windows&logoColor=white" />
-  <img alt="版本：1.4.1" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.4.1-3F6212?style=flat" />
+  <img alt="版本：1.4.2" src="https://img.shields.io/badge/%E7%89%88%E6%9C%AC-1.4.2-3F6212?style=flat" />
 </p>
 
 <p>
@@ -57,7 +57,7 @@
 程序或计算机重新启动后，自动重连的失败次数清零。
 
 > [!NOTE]
-> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.4.1/README.md)。
+> 跨天在线、自然断网恢复和开机自动连接的长期稳定性，还需结合实际校园网环境验证。当前测试范围见 [发行说明](release/1.4.2/README.md)。
 
 ## 环境
 
@@ -73,9 +73,9 @@
 
 ## 使用
 
-完整发行说明和校验文件见 [GitHub Release v1.4.1](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.4.1)。
+完整发行说明和校验文件见 [GitHub Release v1.4.2](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/tag/v1.4.2)。
 
-1. 下载 [1.4.1 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.1/CampusTerminal-1.4.1-windows-x64-setup.exe) 或 [1.4.1 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.1/CampusTerminal-1.4.1-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
+1. 下载 [1.4.2 安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-windows-x64-setup.exe) 或 [1.4.2 便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-windows-x64-portable.zip)。安装版按向导安装；便携版完整解压后，在解压目录运行「开源暨珠有线网络终端.exe」。
 2. 启动器检查本机环境；首次配置时同意管理员授权。如弹出 Npcap 安装窗口，按向导完成安装，随后自动继续配置并打开终端。
 3. 填写学号和密码，选择有线网卡，用普通连接登入。
 4. 点窗口关闭，程序缩到右下角托盘，继续保持认证。要停止时，在托盘菜单里选「退出程序」。
@@ -86,7 +86,7 @@
 
 ### 版本更新
 
-启动时检查 GitHub 正式版。发现新版本后，点击主界面提示查看「更新」「修复」说明，再选择更新或忽略该版本。
+默认不检查更新。可在设置中开启「每次启动自动检查更新」，或随时点击设置页的「检查更新」手动检查 GitHub 正式版。发现新版本后，点击主界面提示查看「更新」「修复」说明，再选择更新或忽略该版本；「更新日志」可查看最近提供版本与当前版本的说明。
 
 「发现新版本后自动更新并重启」默认关闭，可在设置中启用。更新包通过 SHA-256 校验，优先使用匹配当前版本的增量包，也支持完整更新包。程序按文件替换变化内容，保留设置、日志和安装类型，失败时回滚。忽略的版本会随设置保存。
 
@@ -178,9 +178,9 @@ Python 测试覆盖 GUI、凭据存储、通知、自启动、路径、更新说
 ```text
 build/
 ├─ CampusTerminal/                              # 可运行的完整便携目录
-├─ CampusTerminal-1.4.1-windows-x64-portable.zip
-├─ CampusTerminal-1.4.1-windows-x64-setup.exe
-├─ CampusTerminal-1.4.1-windows-x64-payload.zip    # 内置更新的完整文件包
+├─ CampusTerminal-1.4.2-windows-x64-portable.zip
+├─ CampusTerminal-1.4.2-windows-x64-setup.exe
+├─ CampusTerminal-1.4.2-windows-x64-payload.zip    # 内置更新的完整文件包
 └─ update-manifest.json                         # 版本、文件哈希和更新包清单
 ```
 

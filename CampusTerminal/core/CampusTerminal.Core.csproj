@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>CampusTerminal.Core</AssemblyName>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
     <RootNamespace>CampusAuth</RootNamespace>
   </PropertyGroup>
   <ItemGroup>

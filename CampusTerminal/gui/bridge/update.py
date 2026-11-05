@@ -349,6 +349,40 @@ def fetch_offer(user_agent, opener=None, timeout=20):
     }
 
 
+def release_notes(version):
+    """Return a released version's notes through the tag API, or '' when unavailable."""
+    parsed = parse_version(version)
+    if parsed is None:
+        return ""
+    text = format_version(parsed)
+    tag = "v" + text
+    url = "https://api.github.com/repos/" + REPO + "/releases/tags/" + tag
+    user_agent = "CampusTerminal/" + text
+    opener = build_opener()
+    try:
+        payload = json.loads(_read(opener, _request(url, user_agent, "application/vnd.github+json"), 20).decode("utf-8"))
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("tag_name") not in (tag, text):
+        return ""
+    notes = ""
+    readme = _asset_map(payload.get("assets")).get("README.md")
+    if readme:
+        try:
+            blob = _read(opener, _request(readme.get("browser_download_url"), user_agent,
+                                          "application/octet-stream"), 20)
+            digest = _digest(readme.get("digest"))
+            size = readme.get("size")
+            if not digest or size is None or len(blob) != int(size) or hashlib.sha256(blob).hexdigest() != digest:
+                raise ValueError("readme")
+            notes = update_notes(blob.decode("utf-8"))
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+            notes = ""
+    if not notes:
+        notes = update_notes(payload.get("body") or "")
+    return notes
+
+
 def updates_root():
     local = os.environ.get("LOCALAPPDATA")
     if not local:
