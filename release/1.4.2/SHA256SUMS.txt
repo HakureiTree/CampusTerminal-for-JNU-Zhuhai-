@@ -1,3 +1,4 @@
+2789e5a2c657d577335bad9052b17805c85b7b7b9d6bec68b6a208358c859273  .gitattributes
 d5986a1b740b8da65e8f33fa953c40ab01348f50d0b1e0692db152cf39d74b77  BUILD-ENVIRONMENT.txt
 738c4f89ef8ad6b6397c77d2cb5fffa40ab8cdba7dbd8d46475aaf4429682927  CampusTerminal-1.4.2-delta-from-1.4.1.zip
 6bd27d3076279a79b45d78b6a1298e6470082290dcc6cb51cace273c15e1a22d  CampusTerminal-1.4.2-windows-x64-payload.zip
@@ -5,4 +6,4 @@ d53f70f9b62e93b17f35dd551964af347521dae02e9bbdbee280c0fad812f6a2  CampusTerminal
 5e9011bffd2158c2fdf5de1c2728ef0c336eacb6f8d79f33244dccd32ab3e532  CampusTerminal-1.4.2-windows-x64-setup.exe
 4a56a91ac92ed6a11fc5715c7772d1abed5a70c5611c4da7822f297fa0a60a58  README.md
 54affef0672c3c79e21a0c79dc8258aeda8aabdda0b6095f8de83e54ae549c78  SOURCE-SHA256SUMS.txt
-f4606d78f25e9f0fbd3514402cd9eeb10b377c3e5f446ae8e24e0f1c3b0551ae  update-manifest.json
+026d8e45c208b5a7df063c1bbe7161653538ec802300183a190584ad5afbb697  update-manifest.json
