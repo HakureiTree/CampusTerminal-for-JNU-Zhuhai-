@@ -1,0 +1,3 @@
+Combined 1.4.2 source checks: Python 174 (172 passed, 2 skipped to preserve existing user backend), core 221, launcher 46.
+PR #2 head: f1c661461d271ed1f37674ec6f24126464b04418
+Distribution rebuild pending; final environment and source commit will be recorded with the verified artifacts.

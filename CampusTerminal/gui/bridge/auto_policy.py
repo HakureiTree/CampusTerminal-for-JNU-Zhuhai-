@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+import uuid
+
 MAX_AUTO_FAILURES = 5
 SILENT_RETRY_SECONDS = 600
 
@@ -80,11 +82,60 @@ def silent_retry_wait(remaining, capped, other_network, enabled, manual_stop, ha
     return True, SILENT_RETRY_SECONDS
 
 
-def apply_connect_outcome(error, phase, failure_count, yielded, other_network):
+def adapter_key(value):
+    """Canonical UUID text for an adapter id, or None for blank/invalid values."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return str(uuid.UUID(text))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def same_adapter(left, right):
+    """Compare adapter identity by UUID value, ignoring case and braces."""
+    a, b = adapter_key(left), adapter_key(right)
+    return bool(a is not None and b is not None and a == b)
+
+
+def adapter_identity_changed(previous, current):
+    """A real NIC change: formatting-only differences are the same adapter."""
+    return previous != current and not same_adapter(previous, current)
+
+
+def resume_block_reason(owned, owned_adapter, adapter, auto_connect, auto_reconnect, other_network):
+    """Why a slow retry may or may not ask the core to resume its session."""
+    if not owned:
+        return "not_owned"
+    if not same_adapter(owned_adapter, adapter):
+        return "adapter_mismatch"
+    if not auto_connect:
+        return "auto_connect_off"
+    if not auto_reconnect:
+        return "auto_reconnect_off"
+    if other_network:
+        return "other_network"
+    return "ok"
+
+
+def may_resume_owned_session(periodic, owned, owned_adapter, adapter, auto_connect, auto_reconnect, other_network):
+    """Only a slow retry on the same adapter may ask the core to resume its session.
+
+    The core re-checks the same ownership immediately before it touches iNode.
+    """
+    return bool(periodic and resume_block_reason(
+        owned, owned_adapter, adapter, auto_connect, auto_reconnect, other_network) == "ok")
+
+
+def apply_connect_outcome(error, phase, failure_count, yielded, other_network, counted=True):
     """Pure campaign accounting after a status/connect result.
 
     Returns (failure_count, retry_stopped, yielded, notice_error, suppress_error_toast).
-    Count resets only after a verified online session.
+    Count resets only after a verified online session. Pass counted=False when the
+    failure_count was adopted from the core and already includes this error.
     """
     if other_network or error == "AlternativeNetworkPath":
         return failure_count, True, True, "AlternativeNetworkPath", False
@@ -92,7 +143,7 @@ def apply_connect_outcome(error, phase, failure_count, yielded, other_network):
         return 0, False, False, None, False
     if phase != "error" or not error:
         return failure_count, False, yielded, error, False
-    count = failure_count + 1 if counts_as_auto_failure(error) else failure_count
+    count = failure_count + 1 if counted and counts_as_auto_failure(error) else failure_count
     if should_stop_auto_connect(error, count, False):
         notice = "AutoReconnectLimit" if count >= MAX_AUTO_FAILURES and counts_as_auto_failure(error) else error
         return count, True, yielded, notice, False

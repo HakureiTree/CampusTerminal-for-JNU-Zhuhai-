@@ -110,7 +110,10 @@ def emit(stage, **detail):
     global _sequence, _failed, _last_successful_status, _healthy_status_count
     schemas = {
         "path_census": {"other", "rows"},
-        "connect_submit": {"silent", "adapter", "takeover", "up"},
+        "connect_submit": {"silent", "adapter", "takeover", "up", "resume"},
+        "resume_decision": {"adapter", "owned", "same_adapter", "auto_connect", "auto_reconnect",
+                            "other_network", "failures", "resume", "reason"},
+        "resume_rejected": {"error", "count", "failures"},
         "auto_armed": {"adapter", "has_password", "auto_due", "adapter_up"},
         "request_started": {"request_id", "method"},
         "request_completed": {"request_id", "method", "duration_ms", "timeout_ms", "outcome", "error"},
@@ -122,8 +125,10 @@ def emit(stage, **detail):
         "backend_error": {"request_id", "method", "error"},
         "auto_retry_wait": {"count", "duration_ms", "campaign_id", "outcome", "reason"},
         "auto_retry_cap_reached": {"count", "campaign_id"},
+        "auto_retry_cleared": {"count"},
         "status_healthy_summary": {"count"},
         "status_phase": {"phase", "active"},
+        "gui_resources": {"gdi", "user", "private_mb", "visible", "tray_flashing", "reason"},
     }
     common = {"request_id", "method", "duration_ms", "timeout_ms", "outcome", "error", "error_type",
               "filename", "function", "line", "busy_ms", "count", "first_at", "last_at", "recovery_ms",

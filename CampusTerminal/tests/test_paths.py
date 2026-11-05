@@ -46,6 +46,18 @@ class PathTests(unittest.TestCase):
 
 
 class OriginalProcessTests(unittest.TestCase):
+    def test_original_availability_uses_registered_service_for_custom_installs(self):
+        from gui.bridge import original
+        with patch.object(original.winreg, "OpenKey") as open_key, \
+                patch.object(original.winreg, "QueryValueEx", return_value=(r'"D:\School Tools\iNodeMon.exe" -startService', 1)):
+            self.assertTrue(original.present())
+            open_key.assert_called_once_with(original.winreg.HKEY_LOCAL_MACHINE, original.SERVICE_KEY)
+
+    def test_missing_original_service_disables_its_controls(self):
+        from gui.bridge import original
+        with patch.object(original.winreg, "OpenKey", side_effect=OSError("not installed")):
+            self.assertFalse(original.present())
+
     def test_gui_running_matches_inode_client_process_name(self):
         from gui.bridge import original
 

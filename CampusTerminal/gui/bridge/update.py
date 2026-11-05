@@ -22,7 +22,7 @@ ALLOWED_HOSTS = frozenset({
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:\.0+)?$")
 _NOTES = re.compile(r"(?m)^##\s*更新\s*$")
 _NEXT = re.compile(r"(?m)^##(?!#)[ \t]*\S")
-_FIXES = re.compile(r"(?m)^##[ \t]*修复[ \t]*$")
+_CONTINUED_NOTES = re.compile(r"(?m)^##[ \t]*(?:修复|优化)[ \t]*$")
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 PROTECTED_FILES = frozenset({"edition.txt", "campusterminal.portable"})
 PROTECTED_DIRS = frozenset({"state", "logs", "payload"})
@@ -73,10 +73,8 @@ def update_notes(markdown):
     if rest.startswith("\n"):
         rest = rest[1:]
     nxt = _NEXT.search(rest)
-    if nxt:
-        fixes = _FIXES.match(rest, nxt.start())
-        if fixes:
-            nxt = _NEXT.search(rest, fixes.end())
+    while nxt and _CONTINUED_NOTES.match(rest, nxt.start()):
+        nxt = _NEXT.search(rest, nxt.end())
     body = rest[:nxt.start()] if nxt else rest
     return body.strip()
 
@@ -347,6 +345,40 @@ def fetch_offer(user_agent, opener=None, timeout=20):
             for item in assets if isinstance(item, dict)
         ],
     }
+
+
+def release_notes(version):
+    """Return a released version's notes through the tag API, or '' when unavailable."""
+    parsed = parse_version(version)
+    if parsed is None:
+        return ""
+    text = format_version(parsed)
+    tag = "v" + text
+    url = "https://api.github.com/repos/" + REPO + "/releases/tags/" + tag
+    user_agent = "CampusTerminal/" + text
+    opener = build_opener()
+    try:
+        payload = json.loads(_read(opener, _request(url, user_agent, "application/vnd.github+json"), 20).decode("utf-8"))
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict) or payload.get("tag_name") not in (tag, text):
+        return ""
+    notes = ""
+    readme = _asset_map(payload.get("assets")).get("README.md")
+    if readme:
+        try:
+            blob = _read(opener, _request(readme.get("browser_download_url"), user_agent,
+                                          "application/octet-stream"), 20)
+            digest = _digest(readme.get("digest"))
+            size = readme.get("size")
+            if not digest or size is None or len(blob) != int(size) or hashlib.sha256(blob).hexdigest() != digest:
+                raise ValueError("readme")
+            notes = update_notes(blob.decode("utf-8"))
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+            notes = ""
+    if not notes:
+        notes = update_notes(payload.get("body") or "")
+    return notes
 
 
 def updates_root():

@@ -19,10 +19,11 @@ from gui.bridge.worker import BackendWorker
 from gui.bridge.local_net import ConnectionAddressRefresh, TrafficSampler, adapter_ipv4, alternative_path, list_adapters, path_census
 from gui.bridge.messages import error_text
 from gui.bridge.auto_policy import (
-    MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, apply_connect_outcome, connection_due,
+    MAX_AUTO_FAILURES, SILENT_RETRY_SECONDS, adapter_identity_changed, adapter_key,
+    apply_connect_outcome, connection_due, resume_block_reason, same_adapter,
     should_retry_auto_connect, silent_retry_wait, want_auto_connect)
 
-from gui.bridge import trace
+from gui.bridge import resources, trace
 from gui.shell.alerts import AlertHost
 from gui.shell.notifications import Notice, NotificationPolicy
 from gui.shell.tray import AppTray, allow_taskbar_created
@@ -30,12 +31,12 @@ from gui.shell.window import MainWindow
 from gui.bridge.startup import show_main_on_launch
 from gui.bridge.update import (
     apply_script_path, consume_result, fetch_offer, format_version, local_version,
-    offer_visible, parse_version, prepare_transaction, spawn_apply)
+    offer_visible, parse_version, prepare_transaction, release_notes, spawn_apply)
 from gui.shell.instance import SingleInstance, claim_primary, ping
 
 
 def _choose_adapter(adapters, data):
-    chosen = next((a for a in adapters if a["id"] == data.get("adapter_id")), None)
+    chosen = next((a for a in adapters if same_adapter(a["id"], data.get("adapter_id"))), None)
     if not chosen:
         chosen = next((a for a in adapters if a["label"] == data.get("adapter")), None)
     if not chosen and adapters:
@@ -144,8 +145,38 @@ def _main_impl(cleanup):
                "notified_fallback": bool(data.get("inode_fallback")), "inode_offered": False,
                "failure_count": 0, "yielded_network": False, "accounted": False,
                "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False,
-               "campaign_id": "", "campaign_eligible": False, "log_alerted": False}
+               "campaign_id": "", "campaign_eligible": False, "log_alerted": False,
+               "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False,
+               "resume_rejections": 0, "update_checking": False}
     runtime["last_logged_status_phase"] = None
+    # The window starts hidden in silent mode; the first present is a reveal too.
+    window_hidden = {"concealed": not window.isVisible()}
+
+    def sample_resources_event(reason):
+        """Journal a resource sample; diagnostics must never disturb the GUI."""
+        try:
+            values = resources.sample_resources(window.isVisible(), tray.flashing if tray else False)
+        except Exception:
+            values = None
+        try:
+            if values is None:
+                trace.emit("gui_resources", reason="error")
+            else:
+                trace.emit("gui_resources", reason=reason, **values)
+        except Exception:
+            pass
+
+    def note_concealed():
+        window_hidden["concealed"] = True
+
+    def note_revealed():
+        if not window_hidden["concealed"]:
+            return
+        window_hidden["concealed"] = False
+        sample_resources_event("revealed")
+
+    window.concealed.connect(note_concealed)
+    window.revealed.connect(note_revealed)
 
     def apply_original_features():
         on = original_present()
@@ -206,10 +237,13 @@ def _main_impl(cleanup):
         if tray:
             tray.set_phase(phase)
 
-    def options(takeover=False, manual=False, silent_retry=False, campaign=False):
+    def options(takeover=False, manual=False, silent_retry=False, campaign=False, resume_owned=False):
         result = {"autoReconnect": bool(data.get("auto_reconnect")), "inodeFallback": bool(data.get("inode_fallback")),
                 "connectionType": "normal", "takeOverOriginal": bool(takeover), "manual": bool(manual),
-                "silentRetry": bool(silent_retry)}
+                "silentRetry": bool(silent_retry), "resumeOwnedSession": bool(resume_owned)}
+        nic = selected()
+        if nic:
+            result["adapterId"] = nic["id"]
         if campaign:
             result.update(autoReconnectCampaign=True, campaignId=ensure_campaign_id())
         return result
@@ -227,6 +261,7 @@ def _main_impl(cleanup):
                        campaign_id=runtime["campaign_id"] or None, outcome="entered", reason=reason)
 
     def completed(method, result):
+        periodic = runtime.pop("periodic_connect", False)
         if method == "shutdown" and result.get("error") in ("BackendUnavailable", "BackendStopTimeout") and not data.get("inode_fallback"):
             result = {"ok": True, "pending": False}
         if result.get("ok"):
@@ -244,6 +279,9 @@ def _main_impl(cleanup):
                 if phase_now != runtime["last_logged_status_phase"]:
                     runtime["last_logged_status_phase"] = phase_now
                     trace.emit("status_phase", phase=phase_now, active=bool(result.get("active")))
+            if "resumeOwnedSession" in result:
+                runtime["resume_owned_session"] = bool(result.get("resumeOwnedSession"))
+                runtime["resume_adapter"] = adapter_key(result.get("resumeAdapter")) or ""
             if method == "status" and result.get("phase") in ("online", "fallback_active"):
                 runtime["campaign_eligible"] = False
                 runtime["campaign_id"] = ""
@@ -263,10 +301,19 @@ def _main_impl(cleanup):
                     notifications.fallback_option(confirmed)
                     runtime["notified_fallback"] = confirmed
             runtime["active"] = bool(result.get("active", method == "connect"))
+            previous_failures = runtime["failure_count"]
+            if result.get("ok") and method in ("connect", "ensure_started"):
+                # Only a request the core accepted opens a new failure-accounting
+                # episode. A pre-auth rejection must not re-count the old error.
+                runtime["accounted"] = False
             rec = result.get("recovery") or {}
-            remote_failures = int(rec.get("autoFailures") or 0)
-            if remote_failures:
-                runtime["failure_count"] = max(runtime["failure_count"], remote_failures)
+            remote_raw = rec.get("autoFailures")
+            authoritative = (isinstance(remote_raw, int) and not isinstance(remote_raw, bool)
+                             and remote_raw >= 0)
+            if authoritative:
+                # The core owns the authentication failure budget; adopt it exactly
+                # instead of merging and then adding a second local increment.
+                runtime["failure_count"] = remote_raw
             if rec.get("exhausted") and runtime["failure_count"] >= MAX_AUTO_FAILURES:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
@@ -299,13 +346,17 @@ def _main_impl(cleanup):
                     runtime["silent_wait"] = SILENT_RETRY_SECONDS
                     runtime["released_for_other"] = False
                 count, stopped, yielded, notice, suppress = apply_connect_outcome(
-                    err, phase, runtime["failure_count"], runtime["yielded_network"], yield_now)
+                    err, phase, runtime["failure_count"], runtime["yielded_network"], yield_now,
+                    counted=not authoritative)
                 runtime["failure_count"], runtime["retry_stopped"], runtime["yielded_network"] = count, stopped, yielded
                 if phase == "error" or notice == "AlternativeNetworkPath":
                     runtime["accounted"] = True
                     runtime["campaign_eligible"] = True
                 if stopped:
                     runtime["auto_due"] = False
+            if (phase in ("online", "degraded") and not yield_now and previous_failures
+                    and runtime["failure_count"] == 0):
+                trace.emit("auto_retry_cleared", count=0)
             rows = []
             for e in rec.get("events", []):
                 event_result = str(e.get("result") or "")
@@ -377,6 +428,22 @@ def _main_impl(cleanup):
             if blocking:
                 runtime["retry_stopped"] = True
                 runtime["auto_due"] = False
+            if periodic and err:
+                # A slow retry that cannot take over must keep the ten-minute backoff
+                # instead of collapsing into the two-second fast retry loop.
+                runtime["auto_due"] = False
+                runtime["retry_stopped"] = True
+                runtime["cap_noted"] = True
+                runtime["silent_wait"] = SILENT_RETRY_SECONDS
+                runtime["resume_rejections"] = runtime.get("resume_rejections", 0) + 1
+                trace.emit("resume_rejected", error=err, count=runtime["resume_rejections"],
+                           failures=runtime["failure_count"])
+                trace.emit("auto_retry_wait", count=runtime["failure_count"],
+                           duration_ms=SILENT_RETRY_SECONDS * 1000,
+                           campaign_id=runtime["campaign_id"] or None, outcome="entered", reason="resume_rejected")
+                sync_phase("error", error=err, quiet=True)
+                pump()
+                return
             idle_status = method == "status" and not runtime["active"] and err == "BackendUnavailable"
             if not idle_status:
                 sync_phase("error", error=err)
@@ -457,8 +524,16 @@ def _main_impl(cleanup):
         refresh_ipv4()
         runtime["last_up"] = False
         if not preview:
-            data["adapter"], data["adapter_id"] = label, match["id"] if match else ""
+            current = match["id"] if match else ""
+            changed = adapter_identity_changed(data.get("adapter_id"), current)
+            data["adapter"], data["adapter_id"] = label, current
             store.save(data)
+            if changed:
+                # A new adapter must not inherit the previous session's resume right.
+                runtime["resume_owned_session"] = False
+                runtime["resume_adapter"] = ""
+                runtime["configure"] = True
+                pump()
 
     def saved_login():
         user = (data.get("account") or "").strip() if data.get("save_account") else ""
@@ -499,13 +574,31 @@ def _main_impl(cleanup):
         except OSError:
             alerts.warn("网络登入", "凭据设置保存失败，尚未发起连接。")
             return False
-        takeover = original_running() and not periodic
+        takeover = not periodic and original_running()
+        resume_owned = False
+        if periodic:
+            try:
+                local_other = bool(alternative_path(nic["id"]))
+            except OSError:
+                local_other = False
+            resume_reason = resume_block_reason(
+                runtime["resume_owned_session"], runtime["resume_adapter"], nic["id"],
+                data.get("auto_connect"), data.get("auto_reconnect"), local_other)
+            resume_owned = resume_reason == "ok"
+            trace.emit("resume_decision", adapter=nic["id"],
+                       owned=bool(runtime["resume_owned_session"]),
+                       same_adapter=same_adapter(runtime["resume_adapter"], nic["id"]),
+                       auto_connect=bool(data.get("auto_connect")),
+                       auto_reconnect=bool(data.get("auto_reconnect")),
+                       other_network=local_other, failures=runtime["failure_count"],
+                       resume=resume_owned, reason=resume_reason)
         trace.emit("connect_submit", silent=silent, adapter=nic["id"], takeover=takeover,
-                   up=bool(nic.get("up")))
+                   up=bool(nic.get("up")), resume=resume_owned)
         campaign = bool(silent and runtime["campaign_eligible"])
-        backend.submit("connect", user, password, nic["id"],
-                       options(takeover=takeover, manual=not silent, silent_retry=periodic, campaign=campaign))
-        runtime["accounted"] = False
+        if backend.submit("connect", user, password, nic["id"],
+                          options(takeover=takeover, manual=not silent, silent_retry=periodic,
+                                  campaign=campaign, resume_owned=resume_owned)):
+            runtime["periodic_connect"] = bool(periodic)
         if not silent:
             runtime["campaign_eligible"] = False
             runtime["campaign_id"] = ""
@@ -717,6 +810,7 @@ def _main_impl(cleanup):
         return True
 
     attach_tray()
+    sample_resources_event("startup")
     match = selected()
     sampler.set_adapter(match["name"] if match else None)
     refresh_ipv4()
@@ -734,6 +828,10 @@ def _main_impl(cleanup):
     timer = QTimer(window)
     timer.setInterval(1000)
     timer.timeout.connect(tick)
+    resources_timer = QTimer(window)
+    resources_timer.setInterval(60 * 1000)
+    resources_timer.timeout.connect(lambda: sample_resources_event("periodic"))
+    resources_timer.start()
     watchdog = trace.MainLoopWatchdog()
     cleanup.append(watchdog.close)
     pulse = QTimer(window)
@@ -745,6 +843,7 @@ def _main_impl(cleanup):
             return
         runtime["closing"] = True
         timer.stop()
+        resources_timer.stop()
         pulse.stop()
         watchdog.close()
         # Focus loss during widget destruction must not save or open a dialog.
@@ -757,6 +856,8 @@ def _main_impl(cleanup):
         checked = pyqtSignal(object)
         ready = pyqtSignal(object)
         failed = pyqtSignal(str)
+        notes = pyqtSignal(str, str)
+        check_failed = pyqtSignal(str)
 
     update_signals = _UpdateSignals(window)
 
@@ -769,10 +870,14 @@ def _main_impl(cleanup):
             runtime["auto_due"] = True
             QTimer.singleShot(0, tick)
 
+    def update_failure(reason):
+        detail = str(reason or "更新没有完成")[:180]
+        return Notice("更新失败", "更新失败：" + detail + "，当前版本未更改。", "warning", "confirm")
+
     def report_update_result():
         payload = consume_result()
         if payload and not payload.get("ok"):
-            alerts.deliver(Notice("更新未完成", str(payload.get("error") or "更新没有完成，仍在使用当前版本。"), "warning", "confirm"))
+            alerts.deliver(update_failure(payload.get("error")))
 
     def shutdown_for_update():
         runtime["quit"] = True
@@ -791,6 +896,7 @@ def _main_impl(cleanup):
             release_update_hold(True)
             return
         runtime["update_applying"] = True
+        window.settings.updates.set_status("正在下载并校验…", True)
         window.update_chip.setEnabled(False)
         alerts.deliver(Notice(
             "正在更新",
@@ -816,6 +922,7 @@ def _main_impl(cleanup):
             runtime["update_applying"] = False
             window.update_chip.setEnabled(True)
             window.update_chip.set_version("")
+            window.settings.updates.set_status("当前已是最新版本")
             release_update_hold(True)
             return
         try:
@@ -823,7 +930,8 @@ def _main_impl(cleanup):
         except OSError as exc:
             runtime["update_applying"] = False
             window.update_chip.setEnabled(True)
-            alerts.deliver(Notice("更新未完成", str(exc)[:180], "warning", "confirm"))
+            window.settings.updates.set_status("更新失败，点击重试")
+            alerts.deliver(update_failure(exc))
             release_update_hold(True)
             return
         shutdown_for_update()
@@ -831,10 +939,12 @@ def _main_impl(cleanup):
     def on_update_failed(message):
         runtime["update_applying"] = False
         window.update_chip.setEnabled(True)
-        alerts.deliver(Notice("更新未完成", message or "更新没有完成，仍在使用当前版本。", "warning", "confirm"))
+        window.settings.updates.set_status("更新失败，点击重试")
+        alerts.deliver(update_failure(message))
         release_update_hold(True)
 
     def on_update_checked(offer):
+        runtime["update_checking"] = False
         if runtime["closing"]:
             return
         report_update_result()
@@ -843,9 +953,11 @@ def _main_impl(cleanup):
         remote = parse_version(offer.get("version")) if isinstance(offer, dict) else None
         if not offer_visible(local, remote, ignored):
             window.update_chip.set_version("")
+            window.settings.updates.set_status("当前已是最新版本")
             release_update_hold(True)
             return
         window.update_chip.set_version(format_version(remote))
+        window.settings.updates.set_status("发现新版本 " + format_version(remote))
         window._update_offer = offer
         if data.get("auto_update"):
             begin_apply(offer)
@@ -871,6 +983,7 @@ def _main_impl(cleanup):
             return
         window.update_choice.hide()
         window.update_chip.set_version("")
+        window.settings.updates.set_status("已忽略该版本")
 
     window.update_chip.clicked.connect(show_update_choice)
     window.update_choice.ignore_requested.connect(window.update_confirm.ask)
@@ -883,16 +996,83 @@ def _main_impl(cleanup):
         runtime["update_hold"] = True
         runtime["update_hold_due"] = bool(runtime.get("auto_due"))
         runtime["auto_due"] = False
-    if not preview:
-        def check_updates():
-            try:
-                local = local_version(install_root(), frozen(), T.APP_VERSION)
-                offer = fetch_offer("CampusTerminal/" + (format_version(local) or "0"))
-            except Exception as exc:
-                trace.emit("update_check_failed", error=type(exc).__name__)
-                offer = None
-            update_signals.checked.emit(offer)
+    def check_updates():
+        try:
+            local = local_version(install_root(), frozen(), T.APP_VERSION)
+            offer = fetch_offer("CampusTerminal/" + (format_version(local) or "0"))
+        except Exception as exc:
+            trace.emit("update_check_failed", error=type(exc).__name__)
+            update_signals.check_failed.emit("无法获取版本信息，请检查网络后重试。")
+            return
+        update_signals.checked.emit(offer)
+
+    def on_check_failed(message):
+        runtime["update_checking"] = False
+        if runtime["closing"]:
+            return
+        window.settings.updates.set_status("检查失败，点击重试")
+        window.settings.updates.button.setToolTip(message)
+        release_update_hold(True)
+
+    update_log_state = {"pending": set(), "notes": {}, "sections": []}
+
+    def deliver_notes(version, notes):
+        state = update_log_state
+        if version not in state["pending"]:
+            return
+        state["notes"][version] = notes
+        state["pending"].discard(version)
+        if state["pending"]:
+            return
+        window.settings.update_log.set_busy(False)
+        window.settings.show_update_log(
+            [(heading, state["notes"].get(version, "")) for heading, version, _notes in state["sections"]])
+
+    def fetch_notes(version):
+        try:
+            value = release_notes(version)
+        except Exception as exc:
+            trace.emit("update_notes_failed", error=type(exc).__name__)
+            value = ""
+        update_signals.notes.emit(version, value or "")
+
+    def open_update_log():
+        sections, seen = [], set()
+        offer = getattr(window, "_update_offer", None)
+        if isinstance(offer, dict):
+            version = format_version(parse_version(offer.get("version")))
+            if version:
+                sections.append(("新版本 V" + version, version, str(offer.get("notes") or "")))
+                seen.add(version)
+        running = format_version(local_version(install_root(), frozen(), T.APP_VERSION)) or str(T.APP_VERSION)
+        if running not in seen:
+            sections.append(("当前版本 V" + running, running, None))
+        update_log_state["sections"] = sections
+        update_log_state["notes"] = {version: notes for _heading, version, notes in sections if notes is not None}
+        update_log_state["pending"] = {version for _heading, version, notes in sections if notes is None}
+        if not update_log_state["pending"]:
+            window.settings.show_update_log([(heading, update_log_state["notes"].get(version, ""))
+                                             for heading, version, _notes in sections])
+            return
+        window.settings.update_log.set_busy(True)
+        for version in sorted(update_log_state["pending"]):
+            threading.Thread(target=fetch_notes, args=(version,), daemon=True).start()
+
+    def manual_check():
+        if runtime.get("update_applying") or runtime["closing"] or runtime["update_checking"]:
+            return
+        runtime["update_checking"] = True
+        # Widgets belong to the GUI thread; the worker only fetches data and
+        # returns through queued signals. Also serialize repeated check clicks.
+        window.settings.updates.set_status("正在检查…", True)
         threading.Thread(target=check_updates, daemon=True).start()
+
+    window.settings.log_requested.connect(open_update_log)
+    window.settings.check_update.connect(manual_check)
+    update_signals.notes.connect(deliver_notes)
+    update_signals.check_failed.connect(on_check_failed)
+    if not preview and (data.get("auto_check_update") or data.get("auto_update")):
+        manual_check()
 
     timer.start()
     if not preview and runtime["auto_due"]:
