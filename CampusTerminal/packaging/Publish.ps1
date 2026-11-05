@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 # Build the public portable distribution. No private state or third-party installers.
 param([string]$OutputRoot, [string]$Python='python')
 Set-StrictMode -Version Latest

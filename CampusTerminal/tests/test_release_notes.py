@@ -41,6 +41,13 @@ class UpdateNotesTests(unittest.TestCase):
         self.assertEqual(update.update_notes(""), "")
         self.assertEqual(update.update_notes(None), "")
 
+    def test_optimization_does_not_hide_the_following_fixes(self):
+        text = NOTES.replace("## 修复", "## 优化\n\n- 托盘图标缓存。\n\n## 修复")
+        notes = update.update_notes(text)
+        self.assertIn("托盘图标缓存", notes)
+        self.assertIn("修复周期重认证断线", notes)
+        self.assertNotIn("从托盘退出后升级", notes)
+
     def test_format_and_parse_round_trip(self):
         self.assertEqual(update.format_version(update.parse_version("v1.4.1")), "1.4.1")
         self.assertEqual(update.format_version(None), "")

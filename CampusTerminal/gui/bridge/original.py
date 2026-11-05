@@ -1,13 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-from pathlib import Path
+import winreg
 
 import psutil
 
-CLIENT = Path(r"C:\Program Files (x86)\iNode\iNode Client\iNode Client.exe")
+SERVICE_KEY = r"SYSTEM\CurrentControlSet\Services\INODE_SVR_SERVICE"
 
 
 def present():
-    return CLIENT.is_file()
+    # This controls UI availability only. The elevated handoff validates the
+    # registered executable and running image before performing any action.
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SERVICE_KEY) as key:
+            command, _kind = winreg.QueryValueEx(key, "ImagePath")
+        return isinstance(command, str) and bool(command.strip())
+    except OSError:
+        return False
 
 
 def _process_base(name):

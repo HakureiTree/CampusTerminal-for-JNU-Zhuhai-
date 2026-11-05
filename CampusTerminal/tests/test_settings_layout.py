@@ -19,6 +19,23 @@ SIZES = ((300, 560), (350, 750), (600, 700))
 
 
 class SettingsLayoutTests(unittest.TestCase):
+    def test_initial_layout_and_repeated_reflow_keep_cards_separate(self):
+        for scale in (.1, .13, .2):
+            window = MainWindow(scale, theme.load_design_font())
+            try:
+                window.show()
+                window.show_settings()
+                APP.processEvents()
+                settings = window.settings
+                initial = [block.geometry() for block in settings._blocks]
+                for _ in range(3):
+                    settings._apply_layout()
+                    for above, below in zip(settings._blocks, settings._blocks[1:]):
+                        self.assertLess(above.geometry().bottom(), below.y(), scale)
+                    self.assertEqual([block.geometry() for block in settings._blocks], initial)
+            finally:
+                window.quit_app()
+
     def setUp(self):
         self.window = MainWindow(.2, theme.pick_font_family())
         self.window.show()

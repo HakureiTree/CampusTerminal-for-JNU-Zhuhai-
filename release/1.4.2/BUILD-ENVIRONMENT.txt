@@ -1,19 +1,24 @@
 Python 3.13.5 x64
-.NET SDK 10.0.401
+.NET SDK 10.0.301
 Inno Setup 6.7.3
-Source build commit: 6f6e4b9359cfdbb48661cacf5bb2f04ce4bcc4f3
+Source build commit: 30c65ddaa732c9a9cd1b061f30af09f57f868106
+PR #2 head: f1c661461d271ed1f37674ec6f24126464b04418
+PR #2 integration merge: 0baeb1fa01df4f004444beb15b39314be3e8f9a5
 
-Public source checks: Python 164 (162 passed, 2 skipped to preserve the existing backend), core 221, launcher 46.
-Portable ZIP and update manifest generated; packaged GUI preview and installer compilation passed.
+Public source checks: Python 175 (173 passed, 2 skipped to preserve existing user backend), core 221, launcher 46.
+Final settings checks: 11 passed, including initial layout, repeated reflow and 100/125/150% DPI screenshots.
+Portable ZIP, 266-file payload and 18-file delta hashes, sizes and reconstructed target verified.
+Packaged portable/installed GUI preview, isolated installation/uninstallation and registry cleanup passed.
+No live campus authentication, driver installation, prolonged reconnect or live online upgrade was performed.
 
 altgraph==0.17.5
-packaging==24.2
+packaging==26.3
 pefile==2024.8.26
-psutil==5.9.0
-pyinstaller==6.20.0
-pyinstaller-hooks-contrib==2026.4
+psutil==5.9.8
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
 PyQt5==5.15.10
 PyQt5-Qt5==5.15.2
-PyQt5_sip==12.13.0
-pywin32-ctypes==0.2.2
-setuptools==80.9.0
+PyQt5_sip==12.20.0
+pywin32-ctypes==0.2.3
+setuptools==84.0.0

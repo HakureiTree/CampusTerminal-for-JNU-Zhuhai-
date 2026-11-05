@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory=$true)][ValidateSet('Preflight','RecoveryPreflight','StopOriginal','StopOriginalService','RestoreService','ClientExists','StartClient','WaitClient','Authentication','Network','ResumeMonitor')][string]$Stage,
     [Parameter(Mandatory=$true)][string]$ContextPath,
     [int]$CallerProcessId=0,
@@ -34,6 +34,7 @@ $statePath=Join-Path ([IO.Path]::GetDirectoryName($ContextPath)) 'original-state
 Import-Module (Resolve-PackFile 'src\Runtime.psm1')
 Import-Module (Resolve-PackFile 'src\INodeController.psm1')
 Import-Module (Resolve-PackFile 'replacement\OriginalService.psm1')
+Import-Module (Resolve-PackFile 'src\INodeInstallation.psm1')
 
 function Assert-OwnedPause {
     if(-not [IO.File]::Exists($pause) -or [IO.File]::ReadAllText($pause) -cne $context.Marker){throw 'MaintenanceOwnershipLost'}
@@ -178,8 +179,7 @@ try {
             $control=Get-VerifiedMonitor
             $service=Get-CampusOriginalService
             $runId=if($null -eq $control){'none'}else{$control.RunId}
-            if($runId -cne $state.RunId -or $service.Name -cne $state.Service.Name -or
-                $service.Path -cne $state.Service.Path -or $service.StartMode -cne $state.Service.StartMode){throw 'RecoveryBaselineChanged'}
+            if($runId -cne $state.RunId -or -not (Test-INodeServiceIdentity $state.Service $service)){throw 'RecoveryBaselineChanged'}
         }
         Preflight {
             $control=Get-VerifiedMonitor

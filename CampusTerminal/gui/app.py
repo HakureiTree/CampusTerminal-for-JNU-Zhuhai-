@@ -147,7 +147,7 @@ def _main_impl(cleanup):
                "cap_noted": False, "silent_wait": SILENT_RETRY_SECONDS, "released_for_other": False,
                "campaign_id": "", "campaign_eligible": False, "log_alerted": False,
                "resume_owned_session": False, "resume_adapter": "", "periodic_connect": False,
-               "resume_rejections": 0}
+               "resume_rejections": 0, "update_checking": False}
     runtime["last_logged_status_phase"] = None
     # The window starts hidden in silent mode; the first present is a reveal too.
     window_hidden = {"concealed": not window.isVisible()}
@@ -574,7 +574,7 @@ def _main_impl(cleanup):
         except OSError:
             alerts.warn("网络登入", "凭据设置保存失败，尚未发起连接。")
             return False
-        takeover = original_running() and not periodic
+        takeover = not periodic and original_running()
         resume_owned = False
         if periodic:
             try:
@@ -857,6 +857,7 @@ def _main_impl(cleanup):
         ready = pyqtSignal(object)
         failed = pyqtSignal(str)
         notes = pyqtSignal(str, str)
+        check_failed = pyqtSignal(str)
 
     update_signals = _UpdateSignals(window)
 
@@ -943,6 +944,7 @@ def _main_impl(cleanup):
         release_update_hold(True)
 
     def on_update_checked(offer):
+        runtime["update_checking"] = False
         if runtime["closing"]:
             return
         report_update_result()
@@ -995,14 +997,22 @@ def _main_impl(cleanup):
         runtime["update_hold_due"] = bool(runtime.get("auto_due"))
         runtime["auto_due"] = False
     def check_updates():
-        window.settings.updates.set_status("正在检查…", True)
         try:
             local = local_version(install_root(), frozen(), T.APP_VERSION)
             offer = fetch_offer("CampusTerminal/" + (format_version(local) or "0"))
         except Exception as exc:
             trace.emit("update_check_failed", error=type(exc).__name__)
-            offer = None
+            update_signals.check_failed.emit("无法获取版本信息，请检查网络后重试。")
+            return
         update_signals.checked.emit(offer)
+
+    def on_check_failed(message):
+        runtime["update_checking"] = False
+        if runtime["closing"]:
+            return
+        window.settings.updates.set_status("检查失败，点击重试")
+        window.settings.updates.button.setToolTip(message)
+        release_update_hold(True)
 
     update_log_state = {"pending": set(), "notes": {}, "sections": []}
 
@@ -1049,15 +1059,20 @@ def _main_impl(cleanup):
             threading.Thread(target=fetch_notes, args=(version,), daemon=True).start()
 
     def manual_check():
-        if runtime.get("update_applying") or runtime["closing"]:
+        if runtime.get("update_applying") or runtime["closing"] or runtime["update_checking"]:
             return
+        runtime["update_checking"] = True
+        # Widgets belong to the GUI thread; the worker only fetches data and
+        # returns through queued signals. Also serialize repeated check clicks.
+        window.settings.updates.set_status("正在检查…", True)
         threading.Thread(target=check_updates, daemon=True).start()
 
     window.settings.log_requested.connect(open_update_log)
     window.settings.check_update.connect(manual_check)
     update_signals.notes.connect(deliver_notes)
+    update_signals.check_failed.connect(on_check_failed)
     if not preview and (data.get("auto_check_update") or data.get("auto_update")):
-        threading.Thread(target=check_updates, daemon=True).start()
+        manual_check()
 
     timer.start()
     if not preview and runtime["auto_due"]:

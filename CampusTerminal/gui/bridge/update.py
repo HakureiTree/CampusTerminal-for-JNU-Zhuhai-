@@ -22,7 +22,7 @@ ALLOWED_HOSTS = frozenset({
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:\.0+)?$")
 _NOTES = re.compile(r"(?m)^##\s*更新\s*$")
 _NEXT = re.compile(r"(?m)^##(?!#)[ \t]*\S")
-_FIXES = re.compile(r"(?m)^##[ \t]*修复[ \t]*$")
+_CONTINUED_NOTES = re.compile(r"(?m)^##[ \t]*(?:修复|优化)[ \t]*$")
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 PROTECTED_FILES = frozenset({"edition.txt", "campusterminal.portable"})
 PROTECTED_DIRS = frozenset({"state", "logs", "payload"})
@@ -73,10 +73,8 @@ def update_notes(markdown):
     if rest.startswith("\n"):
         rest = rest[1:]
     nxt = _NEXT.search(rest)
-    if nxt:
-        fixes = _FIXES.match(rest, nxt.start())
-        if fixes:
-            nxt = _NEXT.search(rest, fixes.end())
+    while nxt and _CONTINUED_NOTES.match(rest, nxt.start()):
+        nxt = _NEXT.search(rest, nxt.end())
     body = rest[:nxt.start()] if nxt else rest
     return body.strip()
 

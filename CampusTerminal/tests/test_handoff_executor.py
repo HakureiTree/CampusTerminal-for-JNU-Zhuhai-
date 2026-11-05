@@ -25,6 +25,7 @@ class ExecutorTests(unittest.TestCase):
         shutil.copyfile(fixture, self.root / "src/INodeController.psm1")
         shutil.copyfile(fixture, self.root / "replacement/OriginalService.psm1")
         shutil.copyfile(REPO / "src/Runtime.psm1", self.root / "src/Runtime.psm1")
+        shutil.copyfile(REPO / "src/INodeInstallation.psm1", self.root / "src/INodeInstallation.psm1")
         shutil.copyfile(REPO / "replacement/TrialWorkflow.psm1", self.root / "replacement/TrialWorkflow.psm1")
         self.fixture = {"Adapter": str(uuid.uuid4()), "Mac": "020000000001", "RunId": uuid.uuid4().hex,
                         "Failure": "", "Client": False, "StartedUtc": "2026-09-17T00:00:00Z"}
@@ -95,6 +96,16 @@ class ExecutorTests(unittest.TestCase):
         self.assertFalse(self.stage("ClientExists")["Value"])
         self.assertTrue(self.pause.exists())
         self.assertEqual((self.root / "actions.log").read_text().splitlines(), ["service", "start", "normal-exit", "service"])
+
+    def test_recovery_preflight_rechecks_service_fingerprint(self):
+        self.stage("Preflight")
+        self.stage("RecoveryPreflight")
+        saved = json.loads((self.root / "fixture.json").read_text(encoding="utf-8-sig"))
+        saved["ServiceHash"] = "replaced-binary"
+        self.write("fixture.json", saved)
+        report = self.stage("RecoveryPreflight", ok=False)
+        self.assertEqual(report["Error"], "RecoveryBaselineChanged")
+        self.assertFalse((self.root / "actions.log").exists())
 
     def test_takeover_uses_real_exit_interface_when_service_leaves_gui(self):
         self.prepare_client()

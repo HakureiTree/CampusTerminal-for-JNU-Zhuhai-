@@ -87,6 +87,9 @@ class SettingsPage(ResizableWindow):
         self.close_button.setAccessibleName("收起设置")
         self.close_button.clicked.connect(self.back)
         self._blocks = (self.nic, self.ip, self.types, self.updates, self.update_log, self.autos)
+        # Card constructors already expand to fit minimum font sizes. Reflow
+        # must measure their growth from the design, not that expanded height.
+        self._design_heights = {self.updates: T.SET_UPDATE_BOX[3], self.update_log: T.SET_LOG_BOX[3]}
         self._layout = DesignLayout(self.content, scale)
         self.enable_resize(self.width(), self.height())
         self._apply_layout()
@@ -108,7 +111,8 @@ class SettingsPage(ResizableWindow):
             if shift:
                 block.move(block.x(), block.y() + shift)
             if hasattr(block, "relayout"):
-                before = block.height()
+                before = (round(self._design_heights[block] * self.scale)
+                          if block in self._design_heights else block.height())
                 block.relayout(self.scale)
                 shift += block.height() - before
         last_bottom = max(block.geometry().bottom() + 1 for block in self._blocks)

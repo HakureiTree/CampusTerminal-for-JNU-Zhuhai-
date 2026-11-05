@@ -234,10 +234,12 @@ def run_campaign_scenario():
             patch.object(gui.store, "load", return_value=data), \
             patch.object(gui.store, "load_password", return_value="synthetic-password"), \
             patch.object(gui.store, "save"), patch.object(gui.store, "clear_password"), \
+            patch.object(gui.store, "save_password"), \
             patch.object(gui.store, "startup_enabled", return_value=False), \
             patch.object(gui.QSystemTrayIcon, "isSystemTrayAvailable", return_value=False), \
             patch.object(gui, "alternative_path", return_value=False), \
             patch.object(gui, "original_present", return_value=False), \
+            patch.object(gui, "original_running", return_value=False), \
             patch.object(QTimer, "setInterval", quick_interval):
         assert gui.main() == 0
     assert len(attempts) >= 3, attempts
@@ -329,6 +331,7 @@ def run_resume_scenario():
             patch.object(gui.store, "load", return_value=data), \
             patch.object(gui.store, "load_password", return_value="synthetic-password"), \
             patch.object(gui.store, "save"), patch.object(gui.store, "clear_password"), \
+            patch.object(gui.store, "save_password"), \
             patch.object(gui.store, "startup_enabled", return_value=False), \
             patch.object(gui.QSystemTrayIcon, "isSystemTrayAvailable", return_value=False), \
             patch.object(gui, "alternative_path", return_value=False), \

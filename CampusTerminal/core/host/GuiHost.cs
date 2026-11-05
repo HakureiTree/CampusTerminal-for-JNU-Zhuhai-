@@ -561,6 +561,34 @@ internal static class GuiHost
         Note(stage);
     }
 
+    private static void ConfirmResumeTakeover(AdapterInfo adapter, CancellationToken token)
+    {
+        // The request was submitted a moment ago. If the user disconnected,
+        // changed the adapter, or an alternative network came up, do not
+        // touch the official client.
+        if (token.IsCancellationRequested)
+        {
+            journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = "Cancelled" });
+            throw new OperationCanceledException(token);
+        }
+        var rightState = ResumeRightState(adapter.Id);
+        bool alternative = Adapters.AlternativePath(adapter.Id) || Adapters.PhonePath(adapter.Id);
+        if (ResumeRightLostAfterSubmit(rightState == "Held", false, alternative))
+        {
+            if (alternative)
+            {
+                journal?.Write("ResumeTakeoverCancelled", new
+                {
+                    adapter = adapter.Id,
+                    reason = "AlternativeNetworkPath"
+                });
+                throw new InvalidOperationException("AlternativeNetworkPath");
+            }
+            journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = rightState });
+            throw new InvalidOperationException("OriginalClientRunning");
+        }
+    }
+
     private static void RunSession(AdapterInfo adapter, LocalCredentials creds, CancellationTokenSource owned, bool takeOver,
         AcceptanceRequest? acceptance = null, bool resumeTakeover = false)
     {
@@ -591,33 +619,7 @@ internal static class GuiHost
             var root = FindDataRoot();
             lease = new ObserverLease(Path.Combine(FindRepositoryRoot(root), "logs"));
             lease.WaitForPause(owned.Token);
-            if (takeOver && resumeTakeover)
-            {
-                // The request was submitted a moment ago. If the user disconnected,
-                // changed the adapter, or an alternative network came up, do not
-                // touch the official client.
-                if (owned.IsCancellationRequested)
-                {
-                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = "Cancelled" });
-                    throw new OperationCanceledException(owned.Token);
-                }
-                var rightState = ResumeRightState(adapter.Id);
-                bool alternative = Adapters.AlternativePath(adapter.Id) || Adapters.PhonePath(adapter.Id);
-                if (rightState != "Held" || alternative)
-                {
-                    if (alternative)
-                    {
-                        journal?.Write("ResumeTakeoverCancelled", new
-                        {
-                            adapter = adapter.Id,
-                            reason = "AlternativeNetworkPath"
-                        });
-                        throw new InvalidOperationException("AlternativeNetworkPath");
-                    }
-                    journal?.Write("ResumeTakeoverCancelled", new { adapter = adapter.Id, reason = rightState });
-                    throw new InvalidOperationException("OriginalClientRunning");
-                }
-            }
+            if (takeOver && resumeTakeover) ConfirmResumeTakeover(adapter, owned.Token);
             if (takeOver)
             {
                 var original = new WindowsOriginalHandoff(FindRepositoryRoot(root), adapter, lease,
@@ -626,6 +628,7 @@ internal static class GuiHost
                 AcceptanceRecovery.Publish(acceptance, FindRepositoryRoot(root), lease, original.ReportDirectory);
                 original.Preflight();
                 owned.Token.ThrowIfCancellationRequested();
+                if (resumeTakeover) ConfirmResumeTakeover(adapter, owned.Token);
                 takeoverStarted = true;
                 journal?.Write("OriginalNormalStopRequested");
                 if (acceptance != null) original.StopOriginalNormally();

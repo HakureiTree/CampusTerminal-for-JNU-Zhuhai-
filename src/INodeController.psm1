@@ -1,4 +1,5 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'INodeInstallation.psm1')
 
 if (-not ('ReInode.ProcessAccess' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -43,16 +44,14 @@ namespace ReInode {
 '@
 }
 
-$script:INodeClientPath = 'C:\Program Files (x86)\iNode\iNode Client\iNode Client.exe'
-$script:INodeClientSha256 = '1712589D729482A21AFDA7E097D0BB863708BE17EFC15462427CB8A2D7A15CF1'
-
 function Test-INodeClientBinary {
-    param([string]$Path = $script:INodeClientPath)
-    if (-not [IO.File]::Exists($Path)) { return $false }
+    param([string]$Path)
     try {
-        if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $script:INodeClientSha256) { return $false }
-        # This exact hash was signature-verified during installation. Repeating
-        # WinVerifyTrust here can block on certificate revocation while offline.
+        $registeredPath=Get-INodeClientPath
+        if(-not $Path){$Path=$registeredPath}
+        if([IO.Path]::GetFullPath($Path) -ine $registeredPath){return $false}
+        # Read locally: certificate revocation checks can block while offline.
+        $null=Get-INodeExecutableFingerprint $Path
         return $true
     } catch { return $false }
 }
@@ -69,10 +68,11 @@ function Get-INodeSuiteInventory {
     @(Get-INodeProcessInventory | Where-Object { $_.Name -ne 'iNode Client' })
 }
 function Close-INodeGuiWindows {
+    $client=Get-INodeClientProcess
+    if($null -eq $client){return}
+    if($client.PathState -ne 'Verified'){throw 'OriginalClientIdentityUnavailable'}
     Initialize-INodeDesktop
-    foreach ($p in @(Get-Process -Name 'iNode Client' -ErrorAction SilentlyContinue)) {
-        try { [ReInode.Desktop]::CloseClientWindows($p.Id) } catch { }
-    }
+    [ReInode.Desktop]::CloseClientWindows($client.ProcessId)
 }
 
 function Get-INodeClientProcess {
@@ -86,10 +86,8 @@ function Get-INodeClientProcess {
         # Query limited information instead of enumerating protected process modules.
         $path = [ReInode.ProcessAccess]::ImagePath($p.Id)
         if ($path) {
+            if(-not (Test-INodeClientBinary $path)){throw 'OriginalClientIdentityUnavailable'}
             $pathState = 'Verified'
-            if ([IO.Path]::GetFullPath($path) -ne [IO.Path]::GetFullPath($script:INodeClientPath)) {
-                throw 'The iNode Client process path is not the pinned installation.'
-            }
         }
     } catch [System.ComponentModel.Win32Exception] { $pathState = 'Unavailable' }
     catch [System.InvalidOperationException] { $pathState = 'Unavailable' }
@@ -113,15 +111,16 @@ function Test-INodeProcessInteraction {
     return $null -ne $Client -and $Client.Integrity -ge 0 -and $ownIntegrity -ge $Client.Integrity
 }
 function Get-INodeLaunchShortcut {
-    if (-not (Test-INodeClientBinary)) { throw 'Pinned client binary changed.' }
+    $clientPath=Get-INodeClientPath
+    if (-not (Test-INodeClientBinary $clientPath)) { throw 'OriginalClientIdentityUnavailable' }
     $shell = New-Object -ComObject WScript.Shell
     try {
         $root = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\iNode'
-        $matches = @(Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse | ForEach-Object {
+        $matches = @(Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
             $link=$shell.CreateShortcut($_.FullName)
             try {
-                if ($link.TargetPath -eq $script:INodeClientPath -and -not $link.Arguments -and
-                    $link.WorkingDirectory -eq [IO.Path]::GetDirectoryName($script:INodeClientPath) -and $link.WindowStyle -eq 1) { $_.FullName }
+                if ($link.TargetPath -eq $clientPath -and -not $link.Arguments -and
+                    $link.WorkingDirectory -eq [IO.Path]::GetDirectoryName($clientPath) -and $link.WindowStyle -eq 1) { $_.FullName }
             } finally { $null=[Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
         })
         if ($matches.Count -eq 1) { return $matches[0] }
@@ -129,15 +128,19 @@ function Get-INodeLaunchShortcut {
     } finally { $null=[Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
 }
 function Start-INodeClientNormal {
-    if (-not (Test-INodeClientBinary)) { throw 'Pinned client binary changed.' }
-    $shortcut = Get-INodeLaunchShortcut
+    $clientPath=Get-INodeClientPath
+    if (-not (Test-INodeClientBinary $clientPath)) { throw 'OriginalClientIdentityUnavailable' }
+    $shortcut=$null
+    try{$shortcut=Get-INodeLaunchShortcut}catch{ }
     Initialize-INodeDesktop
-    $dir = [IO.Path]::GetDirectoryName($script:INodeClientPath)
+    $dir = [IO.Path]::GetDirectoryName($clientPath)
     if ($shortcut) {
         [ReInode.Desktop]::LaunchShortcut($shortcut,$dir)
         return
     }
-    Start-Process -FilePath $script:INodeClientPath -WorkingDirectory $dir
+    # Recheck after optional shortcut discovery before launching the binary.
+    if(-not (Test-INodeClientBinary $clientPath)){throw 'OriginalClientIdentityUnavailable'}
+    Start-Process -FilePath $clientPath -WorkingDirectory $dir
 }
 function Confirm-INodeNormalExit {
     param($Identity,[switch]$ProbeOnly)
@@ -198,7 +201,7 @@ function Request-INodeNormalExit {
 }
 function Get-INodeLogCheckpoint {
     $checkpoint=@{}
-    Get-ChildItem (Join-Path ([IO.Path]::GetDirectoryName($script:INodeClientPath)) 'Log') -Filter 'iNode*.log' |
+    Get-ChildItem (Join-Path ([IO.Path]::GetDirectoryName((Get-INodeClientPath))) 'Log') -Filter 'iNode*.log' |
         Where-Object Name -match '^iNode(Cmn|1x)\.' | ForEach-Object { $checkpoint[$_.FullName]=$_.Length }
     if ($checkpoint.Count -eq 0) { throw 'Authentication logs unavailable.' }
     return $checkpoint
@@ -206,7 +209,7 @@ function Get-INodeLogCheckpoint {
 function Get-INodeAuthenticationEvidence {
     param([hashtable]$Checkpoint)
     $auto=$false; $active=$false
-    $folder=Join-Path ([IO.Path]::GetDirectoryName($script:INodeClientPath)) 'Log'
+    $folder=Join-Path ([IO.Path]::GetDirectoryName((Get-INodeClientPath))) 'Log'
     foreach ($file in @(Get-ChildItem $folder -Filter 'iNode*.log' | Where-Object Name -match '^iNode(Cmn|1x)\.')) {
         $offset=if($Checkpoint.ContainsKey($file.FullName)){[long]$Checkpoint[$file.FullName]}else{0L}
         if($file.Length -lt $offset){throw 'Authentication log truncated; evidence is ambiguous.'}
@@ -226,7 +229,7 @@ function Get-INodeAuthenticationEvidence {
 function Get-INodeTailAuthenticationEvidence {
     param([int]$TailBytes=262144)
     $checkpoint=@{}
-    $folder=Join-Path ([IO.Path]::GetDirectoryName($script:INodeClientPath)) 'Log'
+    $folder=Join-Path ([IO.Path]::GetDirectoryName((Get-INodeClientPath))) 'Log'
     foreach ($file in @(Get-ChildItem $folder -Filter 'iNode*.log' | Where-Object Name -match '^iNode(Cmn|1x)\.')) {
         $checkpoint[$file.FullName]=[Math]::Max(0L, $file.Length-$TailBytes)
     }

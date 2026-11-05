@@ -1,17 +1,15 @@
-﻿Set-StrictMode -Version Latest
+Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot '..\src\INodeInstallation.psm1')
 
 function Get-CampusOriginalService {
-    $service=Get-CimInstance Win32_Service -Filter "Name='INODE_SVR_SERVICE'"
-    if($null -eq $service){throw 'Pinned original service missing.'}
-    $binary='C:\Program Files (x86)\iNode\iNode Client\iNodeMon.exe'
-    $expected='"'+$binary+'" -startService'
-    if($service.PathName -cne $expected -or (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne '55BA4AC24E619D7C6D2E8889DB783F44FC2644089A25B5D0351FD77C38B5F89F'){
-        throw 'Original service binary or command changed.'
-    }
-    $controller=Get-Service -Name INODE_SVR_SERVICE
+    $installation=Get-INodeInstallation
+    $service=$installation.Service
+    try{$controller=Get-Service -Name INODE_SVR_SERVICE -ErrorAction Stop}
+    catch{throw 'OriginalServiceQueryFailed'}
     try {
         $dependents=@($controller.DependentServices | Where-Object Status -NE Stopped)
-        [pscustomobject]@{Name=$service.Name;Path=$service.PathName;StartMode=$service.StartMode;State=$service.State;AcceptStop=$service.AcceptStop;RunningDependents=$dependents.Count}
+        [pscustomobject]@{Name=$service.Name;Path=$service.PathName;StartMode=$service.StartMode;State=$service.State;AcceptStop=$service.AcceptStop;RunningDependents=$dependents.Count;
+            BinaryPath=$installation.BinaryPath;BinarySha256=$installation.BinarySha256}
     }finally{$controller.Dispose()}
 }
 
@@ -32,13 +30,13 @@ function Set-CampusOriginalServiceState {
         }
     }
     $before=& $Operations.Read
-    if($before.Name -ne $Original.Name -or $before.Path -cne $Original.Path -or $before.StartMode -ne $Original.StartMode){throw 'Service identity or startup mode changed; no transition requested.'}
+    if(-not (Test-INodeServiceIdentity $Original $before)){throw 'OriginalServiceIdentityChanged'}
     if($before.State -eq $State){return $before}
-    if($before.State -notin @('Running','Stopped')){throw 'Service transition already in progress.'}
-    if($State -eq 'Stopped' -and (-not $before.AcceptStop -or $before.RunningDependents -ne 0)){throw 'Normal service stop not available without affecting dependents.'}
+    if($before.State -notin @('Running','Stopped')){throw 'OriginalServiceBusy'}
+    if($State -eq 'Stopped' -and (-not $before.AcceptStop -or $before.RunningDependents -ne 0)){throw 'OriginalServiceStopUnavailable'}
     $null=& $Operations.Request $State
     $after=& $Operations.Read
-    if($after.Name -ne $Original.Name -or $after.Path -cne $Original.Path -or $after.StartMode -ne $Original.StartMode -or $after.State -ne $State){throw 'Service transition not verified.'}
+    if(-not (Test-INodeServiceIdentity $Original $after) -or $after.State -ne $State){throw 'OriginalServiceTransitionUnverified'}
     return $after
 }
 Export-ModuleMember -Function Get-CampusOriginalService,Set-CampusOriginalServiceState

@@ -17,14 +17,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def run_case(case):
-    from PyQt5.QtCore import QTimer
+    from PyQt5.QtCore import QThread, QTimer
     from PyQt5.QtWidgets import QApplication
     from gui import app as gui
 
-    calls, observations = [], {}
+    calls, observations = [], {"status_threads": []}
     offer = {"version": "9.9.9", "notes": "- fixture update", "assets": []}
     data = {**gui.store.DEFAULTS, "account": "fixture-user", "save_password": True,
-            "auto_connect": True, "auto_start": False, "auto_update": case != "manual",
+            "auto_connect": True, "auto_start": False, "auto_update": case not in ("manual", "manual_check"),
             "auto_check_update": case == "manual",
             "ignored_version": "9.9.9" if case == "ignored" else ""}
     nic = {"id": "fixture-nic", "name": "fixture", "label": "fixture", "up": True}
@@ -58,6 +58,8 @@ def run_case(case):
     def fetch(_agent):
         time.sleep(0.08)
         calls.append("checked")
+        if case == "check_failed":
+            raise OSError("fixture offline")
         return offer
 
     def prepare(*_args):
@@ -72,8 +74,26 @@ def run_case(case):
     real_window = gui.MainWindow
     def window_factory(*args):
         window = real_window(*args)
+        set_status = window.settings.updates.set_status
+
+        def record_status(*args):
+            on_gui_thread = QThread.currentThread() == window.thread()
+            observations["status_threads"].append(on_gui_thread)
+            if on_gui_thread:
+                set_status(*args)
+        window.settings.updates.set_status = record_status
+
+        if case == "manual_check":
+            def request_checks():
+                window.settings.check_update.emit()
+                window.settings.check_update.emit()
+                observations["busy"] = not window.settings.updates.button.isEnabled()
+            QTimer.singleShot(100, request_checks)
+
         def inspect():
             observations["offer_visible"] = window.update_chip.isVisible()
+            observations["check_status"] = window.settings.updates.button.text()
+            observations["check_enabled"] = window.settings.updates.button.isEnabled()
             if case == "manual":
                 window.update_chip.clicked.emit()
                 observations["notes_visible"] = "fixture update" in window.update_choice.body.text()
@@ -87,19 +107,22 @@ def run_case(case):
             (gui, "MainWindow", window_factory), (gui, "BackendClient", Backend),
             (gui, "SingleInstance", lambda *_a: SimpleNamespace(acquire=lambda: True)),
             (gui, "list_adapters", lambda: [nic]), (gui, "alternative_path", lambda *_a: False),
-            (gui, "original_present", lambda: False), (gui, "frozen", lambda: True),
+            (gui, "original_present", lambda: False), (gui, "original_running", lambda: False),
+            (gui, "frozen", lambda: True),
             (gui, "install_root", lambda: Path(temp)), (gui, "fetch_offer", fetch),
             (gui, "prepare_transaction", prepare), (gui, "spawn_apply", spawn),
             (gui, "consume_result", lambda: None),
             (gui.store, "APP_DIR", Path(temp)), (gui.store, "load", lambda: data),
             (gui.store, "load_password", lambda: "fixture-password"),
             (gui.store, "save", lambda *_a: None), (gui.store, "clear_password", lambda: None),
+            (gui.store, "save_password", lambda *_a: None),
             (gui.store, "startup_enabled", lambda: False),
             (gui.store, "sync_silent_startup", lambda *_a: None),
             (gui.QSystemTrayIcon, "isSystemTrayAvailable", lambda: False),
         ]:
             stack.enter_context(patch.object(target, name, value))
         assert gui.main() == 0, calls
+    assert observations["status_threads"] and all(observations["status_threads"]), observations
     if case == "success":
         assert calls.count("prepare") == calls.count("spawn") == calls.count("shutdown") == 1, calls
         assert "connect" not in calls, calls
@@ -113,9 +136,24 @@ def run_case(case):
     elif case == "manual":
         assert observations["offer_visible"] and observations["notes_visible"], observations
         assert "prepare" not in calls and "spawn" not in calls, calls
+    elif case == "manual_check":
+        assert calls.count("checked") == 1 and observations["busy"], (calls, observations)
+        assert observations["offer_visible"] and observations["check_enabled"], observations
+    elif case == "check_failed":
+        assert observations["check_status"] == "检查失败，点击重试" and observations["check_enabled"], observations
+        assert calls.count("connect") == 1 and calls.index("checked") < calls.index("connect"), calls
+        assert "prepare" not in calls and not observations["offer_visible"], calls
 
 
 class UpdateFlowTests(unittest.TestCase):
+    def test_update_checks_use_gui_thread_and_serialize_repeated_clicks(self):
+        result = subprocess.run([sys.executable, __file__, "manual_check"], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
+    def test_failed_check_reports_error_and_releases_automatic_connection(self):
+        result = subprocess.run([sys.executable, __file__, "check_failed"], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
     def test_automatic_update_success_failure_and_ignored_version(self):
         for case in ("success", "failed", "ignored"):
             with self.subTest(case=case):
@@ -128,7 +166,7 @@ class UpdateFlowTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 2 and sys.argv[1] in {"success", "failed", "ignored", "manual"}:
+    if len(sys.argv) == 2 and sys.argv[1] in {"success", "failed", "ignored", "manual", "manual_check", "check_failed"}:
         run_case(sys.argv[1])
     else:
         unittest.main()
