@@ -28,7 +28,7 @@
 - 修复认证失败达到 5 次上限后，学校恢复认证但十分钟静默重试无法接管驻留 iNode、长期无法重新上线的问题。成功后失败计数清零。
 - 修复 GUI 与后台对同一网卡 GUID 的大小写（以及有无大括号）判断不一致，导致静默重试始终没有发出恢复接管请求的问题。GUI 现在统一按 UUID 值比较，旧设置中已保存的大写网卡 ID 可直接继续使用。
 - 修复慢速重试在认证开始前被 `OriginalClientRunning` 拒绝时，GUI 反复累计后台保留的旧认证错误（失败数从 5 涨到 45）的问题。现在以后台 `autoFailures` 为准；只有被接受的认证尝试才开启新的失败记账，认证前拒绝只记录并保留退避。
-- 修复设置页在截图尺寸及最小窗口下文字过小、长标签被裁切、最后一行显示不全的问题。
+- 修复设置页在截图尺寸及最小窗口下文字过小、长标签被裁切、最后一行显示不全的问题；初始窗口也按实际字体高度排列更新卡片，避免卡片重叠。
 - 修复更新日志卡片与设置页底色叠加的问题。
 
 ## 升级
@@ -41,10 +41,12 @@
 
 ## 验证
 
-- 整合后的公开源码 Python 回归 174 项：172 项通过，2 项为保留本机正在使用的后台而跳过。
+- 整合后的公开源码 Python 回归 175 项：173 项通过，2 项为保留本机正在使用的后台而跳过。
 - 后台检查 221 项、启动器检查 46 项通过，仅使用模拟认证帧与驱动平台。
 - 服务发现、路径格式、不同文件版本、恢复身份复核、网卡 GUID、慢速接管、失败计数、托盘缓存、设置布局和更新流程回归通过。
-- 安装版、便携版、完整更新包和 1.4.1 增量包正在重新构建；发行包验证结果在构建完成后补充。
+- 便携版、266 文件完整更新清单与 1.4.1 增量包的文件大小、SHA-256 和隐私文件排除检查通过；增量包 18 个变更文件可重建一致的目标文件。
+- 安装版和便携版的打包 GUI 预览、独立目录安装与卸载、安装登记清理通过。
+- 小窗口初始布局及反复重排、100% / 125% / 150% 缩放截图检查通过。
 
 本次验证不发起真实校园网认证，反馈用户环境、过夜重连与长期资源走势仍需实际环境确认。
 
@@ -55,6 +57,7 @@
 | [安装版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-windows-x64-setup.exe) | 按安装向导安装或升级 |
 | [便携版](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-windows-x64-portable.zip) | 完整解压后运行启动器 |
 | [完整更新包](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-windows-x64-payload.zip) | 供内置更新使用 |
+| [1.4.1 增量包](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/CampusTerminal-1.4.2-delta-from-1.4.1.zip) | 供 1.4.1 内置更新使用 |
 | [更新清单](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/update-manifest.json) | 版本与文件 SHA-256 清单 |
 | [校验值](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/SHA256SUMS.txt) | 发行文件的 SHA-256 |
 | [源码清单](https://github.com/HakureiTree/CampusTerminal-for-JNU-Zhuhai-/releases/download/v1.4.2/SOURCE-SHA256SUMS.txt) | 对应公开源码及资源文件的 SHA-256 |
